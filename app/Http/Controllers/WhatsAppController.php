@@ -64,11 +64,18 @@ class WhatsAppController extends Controller
      */
     public function handle(Request $request, string $store_token): Response
     {
-        Log::info('Raw WhatsApp Webhook Payload', ['payload' => $request->all()]);
+        $payload = $request->json()->all();
+
+        // 1. FILTRAR EVENTOS DE ESTADO (Sent, Delivered, Read)
+        // Si el payload contiene 'statuses', respondemos 200 inmediatamente y salimos en silencio
+        if (isset($payload['entry'][0]['changes'][0]['value']['statuses'])) {
+            return response('OK', 200);
+        }
+
+        // Si pasa el filtro anterior, guardamos el log real del mensaje entrante
+        Log::info('Raw WhatsApp Webhook Payload', ['payload' => $payload]);
 
         // Resolve the active store using webhook metadata only for incoming POST messages.
-        // Do not validate or reject based on the URL route token on regular incoming messages.
-        $payload = $request->json()->all();
         $store = $this->resolveStoreFromPayload($payload);
 
         if (!$store) {
@@ -79,9 +86,6 @@ class WhatsAppController extends Controller
             return response('Not Found', 404);
         }
 
-        // Always return 200 immediately to acknowledge receipt
-        // Process messages asynchronously to avoid timeout issues
-
         Log::debug('WhatsApp webhook received', [
             'store_id' => $store->id,
             'store_name' => $store->name,
@@ -89,9 +93,8 @@ class WhatsAppController extends Controller
         ]);
 
         // Check if this is a message event (not a status update)
-        // Status updates don't have messages array
         if (!isset($payload['entry'][0]['changes'][0]['value']['messages'])) {
-            Log::debug('WhatsApp webhook received but no messages array found (likely status event)', [
+            Log::debug('WhatsApp webhook received but no messages array found', [
                 'store_id' => $store->id,
             ]);
             return response('OK', 200);
