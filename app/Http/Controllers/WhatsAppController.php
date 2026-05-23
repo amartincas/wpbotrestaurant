@@ -6,8 +6,11 @@ use App\Models\Store;
 use App\Models\Conversation;
 use App\Jobs\ProcessWhatsAppMessage;
 use App\Services\WhatsAppService;
+use App\Models\Lead;
+use App\Models\WhatsAppTemplate;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Cache;
 
@@ -162,6 +165,184 @@ class WhatsAppController extends Controller
 
     return response('EVENT_RECEIVED', 200);
 }
+// -------------------------------------------------------------------------
+    // NEW METHOD
+    // -------------------------------------------------------------------------
+
+    /**
+     * Send a Meta-approved template message to a lead from the operator dashboard.
+     *
+     * POST /api/whatsapp/templates/send
+     *
+     * Request body:
+     * {
+     *   "lead_id":      123,
+     *   "template_id":  7,
+     *   "custom_values": ["value1", "value2"]   // operator-supplied overrides
+     * }
+     *
+     * Flow:
+     *  1. Validate request fields.
+     *  2. Load lead and template, enforcing store_id ownership on both.
+     *  3. Auto-prefill variables from lead data using parameters_map,
+     *     then merge/override with any custom_values supplied by the operator.
+     *  4. Call WhatsAppService::sendTemplateMessage().
+     *  5. If template is_reengagement, reset the lead status so the
+     *     AIOrchestrator can resume once the customer replies.
+     *
+     * @param  Request      $request
+     * @return JsonResponse
+     */
+    public function sendManualTemplate(Request $request): JsonResponse
+    {
+        // ── 1. Validate ───────────────────────────────────────────────────────
+        $validated = $request->validate([
+            'lead_id'        => ['required', 'integer', 'exists:leads,id'],
+            'template_id'    => ['required', 'integer', 'exists:whatsapp_templates,id'],
+            'custom_values'  => ['sometimes', 'array'],
+            'custom_values.*' => ['string', 'max:1024'],
+        ]);
+
+        // ── 2. Load & authorise ───────────────────────────────────────────────
+        // The authenticated user's store_id gates both records, ensuring a store
+        // operator can never send a template or contact a lead from another tenant.
+        $lead = Lead::findOrFail($validated['lead_id']);
+
+        /** @var \App\Models\Store $store */
+        $store = $lead->store;   // eager via relationship
+
+        // Verify the template belongs to the same store as the lead.
+        $template = WhatsAppTemplate::where('id', $validated['template_id'])
+            ->where('store_id', $store->id)
+            ->first();
+
+        if (!$template) {
+            Log::warning('WhatsApp template send unauthorised: template does not belong to lead store', [
+                'store_id'    => $store->id,
+                'lead_id'     => $lead->id,
+                'template_id' => $validated['template_id'],
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Template not found or does not belong to this store.',
+            ], 403);
+        }
+
+        // ── 3. Build variables array ──────────────────────────────────────────
+        // parameters_map defines which lead/product fields auto-fill each position.
+        // Example map: {"1": "customer_name", "2": "product_name", "3": "tracking_number"}
+        //
+        // Supported auto-fill keys (extend as your Lead / Product models grow):
+        //   customer_name, customer_phone, product_name, lead_status
+        //
+        // custom_values supplied by the operator act as an indexed override list:
+        //   position 1 → custom_values[0], position 2 → custom_values[1], …
+        // An operator value that is a non-empty string takes precedence over the
+        // auto-filled value for that position.
+
+        $parametersMap  = $template->parameters_map ?? [];  // ["1" => "customer_name", …]
+        $customValues   = $validated['custom_values'] ?? [];
+        $resolvedValues = [];
+
+        // Auto-fill lookup table — add more mappings here as needed
+        $leadData = [
+            'customer_name'  => $lead->customer_name  ?? '',
+            'customer_phone' => $lead->customer_phone ?? '',
+            'product_name'   => $lead->product_name   ?? '',
+            'lead_status'    => $lead->status         ?? '',
+        ];
+
+        // Walk through each positional slot defined in the map
+        foreach ($parametersMap as $position => $fieldKey) {
+            $positionIndex = (int) $position - 1;  // convert 1-based to 0-based
+
+            // Operator override wins if provided and non-empty
+            $operatorValue = $customValues[$positionIndex] ?? null;
+
+            $resolvedValues[$positionIndex] = (is_string($operatorValue) && $operatorValue !== '')
+                ? $operatorValue
+                : ($leadData[$fieldKey] ?? '');
+        }
+
+        // Fill any extra positions the operator added beyond the map definition
+        foreach ($customValues as $idx => $value) {
+            if (!isset($resolvedValues[$idx]) && $value !== '') {
+                $resolvedValues[$idx] = $value;
+            }
+        }
+
+        // Ensure sequential numeric keys for the service method
+        ksort($resolvedValues);
+        $finalVariables = array_values($resolvedValues);
+
+        Log::info('WhatsApp manual template send initiated', [
+            'store_id'      => $store->id,
+            'lead_id'       => $lead->id,
+            'template_id'   => $template->id,
+            'template_name' => $template->name,
+            'is_reengagement' => $template->is_reengagement,
+            'variable_count' => count($finalVariables),
+        ]);
+
+        // ── 4. Send via WhatsAppService ───────────────────────────────────────
+        $sent = WhatsAppService::sendTemplateMessage(
+            to:           $lead->customer_phone,
+            templateName: $template->name,
+            languageCode: $template->language,
+            variables:    $finalVariables,
+            store:        $store,
+        );
+
+        if (!$sent) {
+            Log::error('WhatsApp manual template send failed', [
+                'store_id'      => $store->id,
+                'lead_id'       => $lead->id,
+                'template_name' => $template->name,
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to send template message. Check logs for Meta API details.',
+            ], 502);
+        }
+
+        // ── 5. Re-engagement: reset lead status ───────────────────────────────
+        // When an operator sends a re-engagement template (is_reengagement = true),
+        // the 24-hour WhatsApp conversation window will reopen once the customer
+        // replies. We pre-emptively set the lead back to an active state so the
+        // AIOrchestrator (via ProcessWhatsAppMessage) will resume AI processing
+        // as soon as that reply arrives — without requiring manual intervention.
+        if ($template->is_reengagement) {
+            $lead->update(['status' => 'waiting_customer']);
+
+            // Also re-enable the bot for this phone in case it was paused
+            // (bot_active flag lives on the leads table per ARCHITECTURE.md §2.2 Step 2)
+            $lead->update(['bot_active' => true]);
+
+            Log::info('WhatsApp re-engagement template sent: lead status reset', [
+                'store_id'    => $store->id,
+                'lead_id'     => $lead->id,
+                'customer'    => $lead->customer_phone,
+                'new_status'  => 'waiting_customer',
+                'bot_active'  => true,
+            ]);
+        }
+
+        Log::info('WhatsApp manual template send completed successfully', [
+            'store_id'        => $store->id,
+            'lead_id'         => $lead->id,
+            'template_name'   => $template->name,
+            'is_reengagement' => $template->is_reengagement,
+        ]);
+
+        return response()->json([
+            'success'         => true,
+            'message'         => 'Template message sent successfully.',
+            'is_reengagement' => $template->is_reengagement,
+            'lead_status'     => $template->is_reengagement ? 'waiting_customer' : $lead->status,
+        ]);
+    }
 
     private function resolveStoreFromPayload(array $payload): ?Store
     {

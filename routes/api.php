@@ -14,13 +14,19 @@ use Illuminate\Support\Facades\Route;
 |
 */
 
-// WhatsApp webhook routes
-// GET: Para que Meta valide la conexión de una tienda específica
-Route::get('/whatsapp/webhook/{store_token}', [WhatsAppController::class, 'verify'])
-    ->name('whatsapp.verify');
+// ── Public webhook routes (no auth — Meta calls these directly) ─────────────
+Route::prefix('whatsapp')->group(function () {
+    Route::get('/webhook/{store_token}',  [WhatsAppController::class, 'verify']);
+    Route::post('/webhook/{store_token}', [WhatsAppController::class, 'handle']);
+});
 
-// POST: Para recibir los mensajes de esa tienda específica
-Route::post('/whatsapp/webhook/{store_token}', [WhatsAppController::class, 'handle'])
-    ->name('whatsapp.handle');
+// ── Authenticated internal routes (Filament dashboard / operator UI) ────────
+Route::middleware('auth:sanctum')->prefix('whatsapp')->group(function () {
+
+    // Send a Meta-approved template message to a lead.
+    // Body: { lead_id, template_id, custom_values? }
+    Route::post('/templates/send', [WhatsAppController::class, 'sendManualTemplate']);
+
+});
 
 

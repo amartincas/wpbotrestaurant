@@ -68,6 +68,137 @@ class WhatsAppService
     }
 
     /**
+     * Send a Meta-approved HSM Template Message via WhatsApp Business Cloud API.
+     *
+     * Builds the `template` payload with a `body` component whose positional
+     * parameters are constructed from the ordered $variables array.
+     *
+     * Meta payload reference:
+     * POST https://graph.facebook.com/v20.0/{phone_number_id}/messages
+     * {
+     *   "messaging_product": "whatsapp",
+     *   "to": "<phone>",
+     *   "type": "template",
+     *   "template": {
+     *     "name": "<template_name>",
+     *     "language": { "code": "<language_code>" },
+     *     "components": [
+     *       {
+     *         "type": "body",
+     *         "parameters": [
+     *           { "type": "text", "text": "value1" },
+     *           { "type": "text", "text": "value2" }
+     *         ]
+     *       }
+     *     ]
+     *   }
+     * }
+     *
+     * @param string  $to           Recipient phone (E.164, e.g. "573001234567")
+     * @param string  $templateName Technical name registered in Meta Business Manager
+     * @param string  $languageCode BCP-47 code, e.g. "es_CO", "en_US"
+     * @param array   $variables    Ordered list of replacement values for {{1}}, {{2}}, …
+     * @param Store   $store        Store instance carrying wa_access_token & wa_phone_number_id
+     * @return bool                 True on successful delivery to Meta API
+     */
+    public static function sendTemplateMessage(
+        string $to,
+        string $templateName,
+        string $languageCode,
+        array  $variables,
+        Store  $store
+    ): bool {
+        try {
+            $url = "https://graph.facebook.com/v20.0/{$store->wa_phone_number_id}/messages";
+
+            // Build the ordered parameter objects required by the Meta Cloud API.
+            // Each entry in $variables maps to one positional placeholder: {{1}}, {{2}}, …
+            $parameters = array_map(
+                fn (string $value): array => ['type' => 'text', 'text' => $value],
+                array_values($variables)   // ensure sequential numeric keys
+            );
+
+            // Only include the components key when there are actual variables.
+            // Sending an empty components array causes a Meta API validation error.
+            $templatePayload = [
+                'name'     => $templateName,
+                'language' => ['code' => $languageCode],
+            ];
+
+            if (!empty($parameters)) {
+                $templatePayload['components'] = [
+                    [
+                        'type'       => 'body',
+                        'parameters' => $parameters,
+                    ],
+                ];
+            }
+
+            $payload = [
+                'messaging_product' => 'whatsapp',
+                'recipient_type'    => 'individual',
+                'to'                => $to,
+                'type'              => 'template',
+                'template'          => $templatePayload,
+            ];
+
+            Log::info('WhatsApp template message dispatching', [
+                'store_id'      => $store->id,
+                'to'            => $to,
+                'template_name' => $templateName,
+                'language'      => $languageCode,
+                'variable_count' => count($variables),
+            ]);
+
+            $response = Http::withToken($store->wa_access_token)
+                ->timeout(15)
+                ->post($url, $payload);
+
+            // Log detailed Meta error before the generic failure check,
+            // mirroring the pattern used in sendMessage().
+            if ($response->failed()) {
+                Log::error('WhatsApp template message Meta API error', [
+                    'store_id'      => $store->id,
+                    'to'            => $to,
+                    'template_name' => $templateName,
+                    'status'        => $response->status(),
+                    'body'          => $response->json(),
+                ]);
+            }
+
+            if (!$response->successful()) {
+                Log::warning('WhatsApp template message send failed', [
+                    'store_id'      => $store->id,
+                    'to'            => $to,
+                    'template_name' => $templateName,
+                    'status'        => $response->status(),
+                    'error'         => $response->json(),
+                ]);
+                return false;
+            }
+
+            Log::info('WhatsApp template message sent successfully', [
+                'store_id'      => $store->id,
+                'to'            => $to,
+                'template_name' => $templateName,
+                'wamid'         => data_get($response->json(), 'messages.0.id'),
+            ]);
+
+            return true;
+
+        } catch (\Exception $e) {
+            Log::error('WhatsApp template message send exception', [
+                'store_id'      => $store->id,
+                'to'            => $to,
+                'template_name' => $templateName,
+                'error'         => $e->getMessage(),
+                'trace'         => $e->getTraceAsString(),
+            ]);
+            return false;
+        }
+    }
+
+    /**
      * Test WhatsApp connection with provided credentials
      *
      * @param string $phoneNumberId WhatsApp Phone Number ID
