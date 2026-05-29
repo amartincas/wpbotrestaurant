@@ -53,8 +53,8 @@
                     custom_values: customValues
                 };
 
-                try {
-                    const response = await fetch('/api/whatsapp/templates/send', {
+                try {                    
+                    const response = await fetch('/internal/whatsapp/templates/send', {
                         method: 'POST',
                         headers: {
                             'Content-Type':  'application/json',

@@ -7,5 +7,6 @@ use App\Http\Controllers\WhatsAppController;
 // No need to define routes here - Filament will intercept and handle them
 
 require __DIR__.'/settings.php';
-Route::post('/api/whatsapp/templates/send', [WhatsAppController::class, 'sendManualTemplate'])
+
+Route::post('/internal/whatsapp/templates/send', [WhatsAppController::class, 'sendManualTemplate'])
     ->middleware('auth');
