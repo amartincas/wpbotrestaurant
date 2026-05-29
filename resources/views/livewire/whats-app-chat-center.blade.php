@@ -1,9 +1,97 @@
+<script>
+document.addEventListener('alpine:init', () => {
+    Alpine.data('templateModal', () => ({
+        open: false,
+        currentTemplateId: null,
+        currentParamsMap: {},
+        templateFormVisible: false,
+        selectedTemplateName: '',
+        leadId: 0,
+        apiToken: '',
+        csrfToken: '',
+
+        init() {
+            // Values injected once from Blade — safe because this runs once on page load
+            this.leadId    = this.$el.dataset.leadId    || 0;
+            this.apiToken  = this.$el.dataset.apiToken  || '';
+            this.csrfToken = this.$el.dataset.csrfToken || '';
+        },
+
+        openModal() {
+            this.open                = true;
+            this.templateFormVisible = false;
+            this.currentTemplateId   = null;
+            this.selectedTemplateName = '';
+            this.currentParamsMap    = {};
+        },
+
+        closeModal() {
+            this.open = false;
+        },
+
+        selectTemplate(id, name, paramsMap) {
+            this.currentTemplateId    = id;
+            this.selectedTemplateName = name;
+            this.currentParamsMap     = paramsMap;
+            this.templateFormVisible  = true;
+        },
+
+        async submitTemplate() {
+            const inputs = this.$el.querySelectorAll('.tpl-param');
+            const customValues = {};
+            inputs.forEach(input => {
+                customValues[input.getAttribute('data-key')] = input.value;
+            });
+
+            const payload = {
+                lead_id:       this.leadId,
+                template_id:   this.currentTemplateId,
+                custom_values: customValues
+            };
+
+            try {
+                const response = await fetch('/api/whatsapp/templates/send', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type':  'application/json',
+                        'Authorization': 'Bearer ' + this.apiToken,
+                        'X-CSRF-TOKEN':  this.csrfToken
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                console.log('Template send status:', response.status);
+                const responseText = await response.text();
+                console.log('Template send response:', responseText);
+
+                let result;
+                try {
+                    result = JSON.parse(responseText);
+                } catch (e) {
+                    alert('Respuesta inesperada del servidor. Revisa la consola.');
+                    return;
+                }
+
+                if (result.success) {
+                    alert('Plantilla enviada con exito');
+                    this.closeModal();
+                } else {
+                    alert('Error: ' + (result.message || 'Error desconocido'));
+                }
+            } catch (error) {
+                console.error('Template send fetch error:', error);
+                alert('Error de red: ' + error.message);
+            }
+        }
+    }));
+});
+</script>
+
 <div style="display: grid; grid-template-columns: repeat(12, 1fr); gap: 0; border: 1px solid #e5e7eb; height: 85vh; overflow: hidden; border-radius: 12px; background: white;">
 
     {{-- LEFT PANEL: Conversation list --}}
     <div wire:poll.10s style="grid-column: span 4 / span 4; border-right: 1px solid #e5e7eb; display: flex; flex-direction: column; background: #f9fafb; height: 100%; min-height: 0; overflow: hidden;">
 
-        {{-- Store filter (super admin only) --}}
         @if(Auth::user()->is_super_admin)
             <div style="padding: 1rem; border-bottom: 1px solid #e5e7eb; background: white; flex-shrink: 0;">
                 <select wire:model.live="filterStoreId" style="width: 100%; padding: 0.5rem; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.875rem; background: white;">
@@ -15,12 +103,10 @@
             </div>
         @endif
 
-        {{-- Header --}}
         <div style="padding: 16px; border-bottom: 1px solid #e5e7eb; background: white; flex-shrink: 0;">
             <h2 style="font-weight: bold; color: black; margin: 0;">WhatsApp Chats</h2>
         </div>
 
-        {{-- Scrollable conversation list --}}
         <div style="flex: 1; overflow-y: auto; min-height: 0; background: white;" class="custom-scrollbar">
             @foreach($conversations as $conversation)
                 <button wire:click="selectConversation('{{ $conversation->customer_phone }}')"
@@ -40,88 +126,9 @@
     <div style="grid-column: span 8 / span 8; display: flex; flex-direction: column; background: #e5ddd5; position: relative; height: 100%; overflow: hidden;">
         @if ($selectedPhone)
 
-            {{-- 
-                Alpine.js manages the modal state here.
-                x-data keeps the open/close state OUTSIDE Livewire's re-render cycle,
-                so wire:poll.3s on the chat container won't reset it.
-                currentTemplateId and paramsMap are also stored here so selectTemplate()
-                can read them without relying on a JS global that gets wiped.
-            --}}
-            <div
-                x-data="{
-                    open: false,
-                    currentTemplateId: null,
-                    currentParamsMap: {},
-                    templateFormVisible: false,
-                    selectedTemplateName: '',
+            {{-- Chat header + messages + input bar (Livewire-controlled) --}}
+            <div style="display: flex; flex-direction: column; height: 100%;">
 
-                    openModal() {
-                        this.open = true;
-                        this.templateFormVisible = false;
-                        this.currentTemplateId = null;
-                        this.selectedTemplateName = '';
-                        this.currentParamsMap = {};
-                    },
-
-                    closeModal() {
-                        this.open = false;
-                    },
-
-                    selectTemplate(id, name, paramsMap) {
-                        this.currentTemplateId = id;
-                        this.selectedTemplateName = name;
-                        this.currentParamsMap = paramsMap;
-                        this.templateFormVisible = true;
-                    },
-
-                    async submitTemplate() {
-                        const inputs = document.querySelectorAll('.tpl-param');
-                        const customValues = {};
-                        inputs.forEach(input => {
-                            customValues[input.getAttribute('data-key')] = input.value;
-                        });
-
-                        const payload = {
-                            lead_id: {{ $selectedLeadId ?? 0 }},
-                            template_id: this.currentTemplateId,
-                            custom_values: customValues
-                        };
-
-                        try {
-                            const response = await fetch('/api/whatsapp/templates/send', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'Authorization': 'Bearer ' + {{ Js::from(Auth::user()->api_token ?? '') }},
-                                'X-CSRF-TOKEN': '{{ csrf_token() }}'
-                            },
-                            body: JSON.stringify(payload)
-                        });
-
-                        // ADD THIS
-                        console.log('Status:', response.status);
-                        const responseText = await response.text();
-                        console.log('Raw response:', responseText);
-                        const result = JSON.parse(responseText);
-
-                            const result = await response.json();
-                            if (result.success) {
-                                alert('Plantilla enviada con exito');
-                                this.closeModal();
-                                $dispatch('template-sent');
-                            } else {
-                                alert('Error: ' + result.message);
-                            }
-                        } catch (error) {
-                            alert('Error: ' + error.message);
-                            console.error('Template send error:', error);
-                        }
-                    }
-                }"
-                style="display: flex; flex-direction: column; height: 100%;"
-            >
-
-                {{-- Chat header --}}
                 <div style="padding: 1rem; border-bottom: 1px solid #e5e7eb; background: white; flex-shrink: 0;">
                     <div style="display: flex; justify-content: space-between; align-items: center;">
                         <h3 style="font-weight: 700; color: #111827; margin: 0;">{{ $selectedPhone }}</h3>
@@ -132,7 +139,6 @@
                     </div>
                 </div>
 
-                {{-- Messages --}}
                 <div id="chat-container" wire:poll.3s style="flex: 1; overflow-y: auto; padding: 1.5rem; display: flex; flex-direction: column; gap: 1rem;">
                     @foreach ($messages as $message)
                         <div style="display: flex; width: 100%; justify-content: {{ $message->role === 'user' ? 'flex-start' : 'flex-end' }};">
@@ -144,13 +150,15 @@
                     @endforeach
                 </div>
 
-                {{-- Input bar --}}
                 <div style="padding: 1rem; background: #f0f0f0; border-top: 1px solid #e5e7eb; flex-shrink: 0;">
                     <div style="display: flex; gap: 10px; align-items: center;">
-
-                        {{-- Template button — opens Alpine modal, no DOM getElementById --}}
+                        {{-- 
+                            This button uses a plain JS call to open the Alpine modal.
+                            It does NOT use x-on or Alpine directives so Livewire
+                            morphing cannot interfere with it.
+                        --}}
                         <button
-                            @click="openModal()"
+                            onclick="window.__templateModal && window.__templateModal.openModal()"
                             title="Enviar Plantilla"
                             style="background: #3b82f6; color: white; padding: 0.6rem; border-radius: 50%; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center;">
                             ⚡
@@ -165,92 +173,96 @@
                         </button>
                     </div>
                 </div>
-
-                {{-- 
-                    TEMPLATE MODAL
-                    x-show / x-cloak controlled by Alpine — survives every Livewire re-render.
-                    The overlay click (@click.self) closes the modal when clicking outside.
-                --}}
-                <div
-                    x-show="open"
-                    x-cloak
-                    @click.self="closeModal()"
-                    style="position: absolute; inset: 0; background: rgba(0,0,0,0.5); z-index: 50; display: flex; align-items: center; justify-content: center; padding: 2rem;">
-
-                    <div style="background: white; border-radius: 12px; width: 100%; max-width: 500px; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1);">
-
-                        {{-- Modal header --}}
-                        <div style="padding: 1rem; border-bottom: 1px solid #e5e7eb; display: flex; justify-content: space-between; align-items: center;">
-                            <h4 style="font-weight: 700; color: black; margin: 0;">Plantillas de WhatsApp</h4>
-                            <button @click="closeModal()" style="border: none; background: none; font-size: 1.5rem; cursor: pointer; color: black;">&times;</button>
-                        </div>
-
-                        {{-- Modal body --}}
-                        <div style="padding: 1rem; overflow-y: auto; max-height: 400px;">
-                            <p style="font-size: 0.875rem; color: #4b5563; margin-bottom: 1rem;">
-                                Selecciona una plantilla para enviar. Los campos {{1}}, {{2}}, etc. deben ser completados.
-                            </p>
-
-                            {{-- Template list --}}
-                            <div style="display: flex; flex-direction: column; gap: 10px;">
-                                @foreach(\App\Models\WhatsAppTemplate::where('store_id', Auth::user()->store_id)->get() as $tpl)
-                                    <div
-                                        style="border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; cursor: pointer;"
-                                        @click="selectTemplate('{{ $tpl->id }}', '{{ $tpl->name }}', {{ Js::from($tpl->parameters_map) }})"
-                                        @mouseenter="$el.style.background='#f9fafb'"
-                                        @mouseleave="$el.style.background='white'">
-                                        <div style="font-weight: bold; font-size: 13px; color: #2563eb;">{{ $tpl->name }}</div>
-                                        <div style="font-size: 12px; color: #6b7280;">{{ $tpl->body_preview }}</div>
-                                    </div>
-                                @endforeach
-                            </div>
-
-                            {{-- Dynamic parameter form — shown after picking a template --}}
-                            <div x-show="templateFormVisible" style="margin-top: 1.5rem; border-top: 2px solid #f3f4f6; padding-top: 1rem;">
-
-                                <h5 x-text="'Configurar: ' + selectedTemplateName"
-                                    style="font-size: 14px; font-weight: bold; margin-bottom: 10px; color: black;"></h5>
-
-                                {{-- 
-                                    Alpine renders one input per parameter in currentParamsMap.
-                                    Keys are the placeholder numbers (1, 2, 3…),
-                                    values are the field labels (customer_name, etc.)
-                                --}}
-                                <div style="display: flex; flex-direction: column; gap: 8px;">
-                                    <template x-for="(fieldName, key) in currentParamsMap" :key="key">
-                                        <div>
-                                            <label :for="'param-' + key"
-                                                style="font-size: 11px; font-weight: bold; color: #374151; display: block; margin-bottom: 4px;"
-                                                x-text="'Dato para {{' + key + '}} (' + fieldName + '):'">
-                                            </label>
-                                            <input
-                                                :id="'param-' + key"
-                                                type="text"
-                                                class="tpl-param"
-                                                :data-key="key"
-                                                style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; color: black; box-sizing: border-box;">
-                                        </div>
-                                    </template>
-                                </div>
-
-                                <button
-                                    @click="submitTemplate()"
-                                    style="margin-top: 15px; width: 100%; background: #2563eb; color: white; padding: 10px; border-radius: 8px; font-weight: bold; border: none; cursor: pointer;">
-                                    Enviar Plantilla Oficial
-                                </button>
-                            </div>
-
-                        </div>
-                    </div>
-                </div>
-
-            </div>{{-- end x-data --}}
+            </div>
 
         @else
             <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: #6b7280;">
                 <p>Seleccione un chat para comenzar a conversar</p>
             </div>
         @endif
+    </div>
+</div>
+
+{{-- 
+    MODAL — lives COMPLETELY OUTSIDE the Livewire grid above.
+    Livewire never morphs this element so Alpine state is never lost.
+    Data attributes carry Blade values in at init() time — no inline PHP in Alpine expressions.
+--}}
+<div
+    x-data="templateModal"
+    data-lead-id="{{ $selectedLeadId ?? 0 }}"
+    data-api-token="{{ Auth::user()->api_token ?? '' }}"
+    data-csrf-token="{{ csrf_token() }}"
+    x-init="
+        $watch('open', val => {
+            $el.style.display = val ? 'flex' : 'none';
+        });
+        window.__templateModal = $data;
+    "
+    style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 9999; align-items: center; justify-content: center; padding: 2rem;"
+    @click.self="closeModal()"
+>
+    <div style="background: white; border-radius: 12px; width: 100%; max-width: 500px; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1);">
+
+        {{-- Modal header --}}
+        <div style="padding: 1rem; border-bottom: 1px solid #e5e7eb; display: flex; justify-content: space-between; align-items: center;">
+            <h4 style="font-weight: 700; color: black; margin: 0;">Plantillas de WhatsApp</h4>
+            <button @click="closeModal()" style="border: none; background: none; font-size: 1.5rem; cursor: pointer; color: black; line-height: 1;">&times;</button>
+        </div>
+
+        {{-- Modal body --}}
+        <div style="padding: 1rem; overflow-y: auto; max-height: 450px;">
+
+            <p style="font-size: 0.875rem; color: #4b5563; margin-bottom: 1rem;">
+                Selecciona una plantilla para enviar.
+            </p>
+
+            {{-- Template list --}}
+            <div style="display: flex; flex-direction: column; gap: 10px;">
+                @foreach(\App\Models\WhatsAppTemplate::where('store_id', Auth::user()->store_id)->get() as $tpl)
+                    <div
+                        style="border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; cursor: pointer; background: white;"
+                        @click="selectTemplate('{{ $tpl->id }}', '{{ $tpl->name }}', {{ Js::from($tpl->parameters_map) }})"
+                        @mouseenter="$el.style.background='#f9fafb'"
+                        @mouseleave="$el.style.background='white'">
+                        <div style="font-weight: bold; font-size: 13px; color: #2563eb;">{{ $tpl->name }}</div>
+                        <div style="font-size: 12px; color: #6b7280; margin-top: 4px;">{{ $tpl->body_preview }}</div>
+                    </div>
+                @endforeach
+            </div>
+
+            {{-- Parameter form — shown after selecting a template --}}
+            <div x-show="templateFormVisible" style="margin-top: 1.5rem; border-top: 2px solid #f3f4f6; padding-top: 1rem;">
+
+                <h5
+                    x-text="'Configurar: ' + selectedTemplateName"
+                    style="font-size: 14px; font-weight: bold; margin-bottom: 10px; color: black;">
+                </h5>
+
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                    <template x-for="(fieldName, key) in currentParamsMap" :key="key">
+                        <div>
+                            <label
+                                style="font-size: 11px; font-weight: bold; color: #374151; display: block; margin-bottom: 4px;"
+                                x-text="'Dato para {{' + key + '}} (' + fieldName + '):'">
+                            </label>
+                            <input
+                                type="text"
+                                class="tpl-param"
+                                :data-key="key"
+                                style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; color: black; box-sizing: border-box;">
+                        </div>
+                    </template>
+                </div>
+
+                <button
+                    @click="submitTemplate()"
+                    style="margin-top: 15px; width: 100%; background: #2563eb; color: white; padding: 10px; border-radius: 8px; font-weight: bold; border: none; cursor: pointer;">
+                    Enviar Plantilla Oficial
+                </button>
+
+            </div>
+        </div>
     </div>
 </div>
 
