@@ -89,14 +89,20 @@
 
                         try {
                             const response = await fetch('/api/whatsapp/templates/send', {
-                                method: 'POST',
-                                headers: {
-                                    'Content-Type': 'application/json',
-                                    'Authorization': 'Bearer ' + {{ Js::from(Auth::user()->api_token ?? '') }},
-                                    'X-CSRF-TOKEN': '{{ csrf_token() }}'
-                                },
-                                body: JSON.stringify(payload)
-                            });
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': 'Bearer ' + {{ Js::from(Auth::user()->api_token ?? '') }},
+                                'X-CSRF-TOKEN': '{{ csrf_token() }}'
+                            },
+                            body: JSON.stringify(payload)
+                        });
+
+                        // ADD THIS
+                        console.log('Status:', response.status);
+                        const responseText = await response.text();
+                        console.log('Raw response:', responseText);
+                        const result = JSON.parse(responseText);
 
                             const result = await response.json();
                             if (result.success) {
@@ -107,7 +113,8 @@
                                 alert('Error: ' + result.message);
                             }
                         } catch (error) {
-                            alert('Error en el servidor al enviar la plantilla.');
+                            alert('Error: ' + error.message);
+                            console.error('Template send error:', error);
                         }
                     }
                 }"
