@@ -47,14 +47,28 @@
                     customValues.push(input.value);
                 });
 
-                $wire.sendTemplate(this.currentTemplateId, customValues)
-                    .then(() => {
-                        alert('Plantilla enviada con exito');
-                        this.closeModal();
-                    })
-                    .catch(() => {
-                        alert('Error al enviar la plantilla.');
-                    });
+                // Get the Livewire component instance by its name since $wire
+                // is not available outside Livewire's DOM tree
+                const components = Livewire.all();
+                const chatComponent = components.find(c => 
+                    c.name === 'whats-app-chat-center' || 
+                    c.name === 'whatsAppChatCenter' ||
+                    c.name === 'WhatsAppChatCenter'
+                );
+
+                if (!chatComponent) {
+                    alert('Error: No se pudo encontrar el componente Livewire.');
+                    return;
+                }
+
+                try {
+                    await chatComponent.sendTemplate(this.currentTemplateId, customValues);
+                    alert('Plantilla enviada con exito');
+                    this.closeModal();
+                } catch (error) {
+                    console.error('sendTemplate error:', error);
+                    alert('Error al enviar la plantilla.');
+                }
             }
         }));
     });
