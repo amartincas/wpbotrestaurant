@@ -249,7 +249,19 @@
             Livewire.on('scroll-down', () => { setTimeout(scrollDown, 50); });
         });
 
-        Livewire.on('template-sent-ok',    () => { console.log('Template sent OK'); });
-        Livewire.on('template-sent-error', () => { alert('Error al enviar la plantilla desde Meta.'); });
+        // Suppress Livewire internal poll unhandled rejections
+        window.addEventListener('unhandledrejection', function(event) {
+            const reason = event.reason;
+            if (
+                reason &&
+                typeof reason === 'object' &&
+                reason.status === null &&
+                reason.body === null &&
+                reason.json === null &&
+                reason.errors === null
+            ) {
+                event.preventDefault();
+            }
+        });
     </script>
 </div>

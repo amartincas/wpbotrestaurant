@@ -10,6 +10,7 @@ use Livewire\Attributes\On;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Filament\Notifications\Notification;
 use Livewire\Component;
 
 class WhatsAppChatCenter extends Component
@@ -420,7 +421,23 @@ class WhatsAppChatCenter extends Component
             $lead->update(['status' => 'waiting_customer', 'bot_active' => true]);
         }
 
-        $this->dispatch($sent ? 'template-sent-ok' : 'template-sent-error');
+        if ($sent) {
+            Notification::make()
+                ->title('Plantilla enviada')
+                ->body('El mensaje fue enviado correctamente al cliente.')
+                ->success()
+                ->send();
+
+            if ($template->is_reengagement && $lead) {
+                $lead->update(['status' => 'waiting_customer', 'bot_active' => true]);
+            }
+        } else {
+            Notification::make()
+                ->title('Error al enviar')
+                ->body('Meta no pudo entregar la plantilla. Revisa los logs.')
+                ->danger()
+                ->send();
+        }
     }
 
     // Este método se llamará desde el script del modal tras un envío exitoso
