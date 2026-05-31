@@ -47,12 +47,7 @@
                     customValues.push(input.value);
                 });
 
-                const components = Livewire.all();
-                const chatComponent = components.find(c => 
-                    c.name === 'whats-app-chat-center' || 
-                    c.name === 'whatsAppChatCenter' ||
-                    c.name === 'WhatsAppChatCenter'
-                );
+                const chatComponent = Livewire.all().find(c => c.name === 'whats-app-chat-center');
 
                 if (!chatComponent) {
                     alert('Error: No se pudo encontrar el componente Livewire.');
@@ -60,7 +55,7 @@
                 }
 
                 try {
-                    await chatComponent.call('sendTemplate', this.currentTemplateId, customValues);
+                    await chatComponent.$wire.sendTemplate(this.currentTemplateId, customValues);
                     alert('Plantilla enviada con exito');
                     this.closeModal();
                 } catch (error) {
