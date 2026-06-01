@@ -20,6 +20,7 @@ class WhatsAppChatCenter extends Component
     public $conversations = [];
     public $messages = [];
     public ?string $selectedPhone = null;
+    public ?int $selectedConversationId = null;
     public bool $botActive = true;
     public string $newMessage = ''; // For text input field
     public ?int $filterStoreId = null; // For superuser store filtering
@@ -172,12 +173,21 @@ class WhatsAppChatCenter extends Component
                 ->where('customer_phone', (string) $phone)
                 ->first();
 
+            // Store selected conversation id if one exists
+            $conversation = Conversation::query()
+                ->where('store_id', $storeId)
+                ->where('customer_phone', (string) $phone)
+                ->first();
+
+            $this->selectedConversationId = $conversation?->id;
             // Fetch bot_active status, default to true if no record exists yet
             $this->botActive = $lead?->bot_active ?? true;
             // Store selected lead ID for JS modal (can be null if no lead record exists yet)
             $this->selectedLeadId = $lead?->id;
             // Load WhatsApp templates for this store (for manual template sending)
             $this->whatsappTemplates = \App\Models\WhatsAppTemplate::where('store_id', $storeId)->get();
+        } else {
+            $this->selectedConversationId = null;
         }
 
         // Important for JavaScript
@@ -360,14 +370,26 @@ class WhatsAppChatCenter extends Component
 
     public function sendTemplate(int $templateId, array $customValues = [], ?string $externalPhone = null): void
     {
-        // Resolve store_id using the same pattern as sendMessage()
         $isSuperAdmin = Auth::user()?->is_super_admin ?? false;
+        $targetPhone = $this->selectedPhone;
+        $isExternalSend = false;
+
+        if (!empty($externalPhone)) {
+            $normalized = preg_replace('/\s+/', '', $externalPhone);
+            if (!preg_match('/^\+?\d{6,15}$/', $normalized)) {
+                Log::warning('sendTemplate: invalid external phone format', ['external_phone' => $externalPhone]);
+                $this->dispatch('template-sent-error');
+                return;
+            }
+
+            $targetPhone = ltrim($normalized, '+');
+            $isExternalSend = true;
+        }
 
         if ($isSuperAdmin && !$this->filterStoreId) {
-            $firstMessage = WhatsAppMessage::query()
-                ->where('customer_phone', $this->selectedPhone)
-                ->first();
-            $storeId = $firstMessage?->store_id;
+            $storeId = $targetPhone
+                ? WhatsAppMessage::query()->where('customer_phone', $targetPhone)->value('store_id')
+                : null;
         } elseif ($this->filterStoreId) {
             $storeId = $this->filterStoreId;
         } else {
@@ -375,6 +397,7 @@ class WhatsAppChatCenter extends Component
         }
 
         if (!$storeId) {
+            Log::warning('sendTemplate: store_id could not be resolved', ['selected_phone' => $this->selectedPhone, 'external_phone' => $externalPhone]);
             $this->dispatch('template-sent-error');
             return;
         }
@@ -389,9 +412,29 @@ class WhatsAppChatCenter extends Component
             ->where('store_id', $storeId)
             ->firstOrFail();
 
-        $lead = Lead::where('customer_phone', $this->selectedPhone)
+        if ($template->requires_phone_input && !$isExternalSend) {
+            Log::warning('sendTemplate: template requires external phone but none was provided', ['template_id' => $templateId]);
+            $this->dispatch('template-sent-error');
+            return;
+        }
+
+        $targetPhone = $targetPhone ? (string) $targetPhone : null;
+        if (!$targetPhone) {
+            Log::warning('sendTemplate: target phone is missing', ['template_id' => $templateId]);
+            $this->dispatch('template-sent-error');
+            return;
+        }
+
+        $lead = Lead::where('customer_phone', $targetPhone)
             ->where('store_id', $storeId)
             ->first();
+
+        if ($isExternalSend) {
+            $lead = Lead::firstOrCreate(
+                ['store_id' => $storeId, 'customer_phone' => $targetPhone],
+                ['customer_name' => 'Unknown', 'summary' => 'Proactive message', 'bot_active' => false]
+            );
+        }
 
         $parametersMap = $template->parameters_map ?? [];
         $leadData = [
@@ -401,8 +444,11 @@ class WhatsAppChatCenter extends Component
         ];
 
         Log::info('DEBUG sendTemplate', [
-            'customValues_llegan' => $customValues,
-            'parametersMap_BD' => $parametersMap,
+            'selected_phone' => $this->selectedPhone,
+            'external_phone' => $externalPhone,
+            'target_phone' => $targetPhone,
+            'customValues' => $customValues,
+            'parametersMap' => $parametersMap,
             'leadData' => $leadData,
         ]);
 
@@ -418,44 +464,18 @@ class WhatsAppChatCenter extends Component
 
         Log::info('DEBUG resolvedValues', ['resolvedValues' => array_values($resolvedValues)]);
 
-        // Determine target phone: use externalPhone when template requires it
-        $sendTo = $this->selectedPhone;
-        if ($template->requires_phone_input) {
-            if (empty($externalPhone)) {
-                Log::warning('sendTemplate: external phone required but not provided', ['template_id' => $templateId, 'store_id' => $storeId]);
-                $this->dispatch('template-sent-error');
-                return;
-            }
+        $conversation = Conversation::firstOrCreate([
+            'store_id' => $storeId,
+            'customer_phone' => $targetPhone,
+        ], [
+            'last_session_at' => now(),
+        ]);
 
-            // Basic normalization & validation
-            $normalized = preg_replace('/\s+/', '', $externalPhone);
-            if (!preg_match('/^\+?\d{6,15}$/', $normalized)) {
-                Log::warning('sendTemplate: invalid external phone format', ['external_phone' => $externalPhone]);
-                $this->dispatch('template-sent-error');
-                return;
-            }
-
-            $dbPhone = ltrim($normalized, '+');
-
-            // Ensure lead exists for this phone
-            $lead = Lead::firstOrCreate(
-                ['store_id' => $storeId, 'customer_phone' => $dbPhone],
-                ['customer_name' => 'Unknown', 'summary' => 'Proactive message', 'bot_active' => false]
-            );
-
-            // Ensure conversation exists
-            Conversation::firstOrCreate([
-                'store_id' => $storeId,
-                'customer_phone' => $dbPhone,
-            ], [
-                'last_session_at' => now(),
-            ]);
-
-            $sendTo = $dbPhone;
-        }
+        $this->selectedConversationId = $conversation->id;
+        $this->selectedPhone = $targetPhone;
 
         $sent = WhatsAppService::sendTemplateMessage(
-            to:           $sendTo,
+            to:           $targetPhone,
             templateName: $template->name,
             languageCode: $template->language,
             variables:    array_values($resolvedValues),
@@ -472,10 +492,10 @@ class WhatsAppChatCenter extends Component
                 $placeholder = '{{'. ($index + 1). '}}';
                 $renderedBody = str_replace($placeholder, $value, $renderedBody);
             }
-            // Save the template message to the chat history so it appears in the UI
+
             WhatsAppMessage::create([
                 'store_id'       => $storeId,
-                'customer_phone' => $this->selectedPhone,
+                'customer_phone' => $targetPhone,
                 'content'        => $renderedBody,
                 'role'           => 'assistant',
             ]);
@@ -490,9 +510,7 @@ class WhatsAppChatCenter extends Component
                 $lead->update(['status' => 'waiting_customer', 'bot_active' => true]);
             }
 
-            $this->loadConversations();
-            $this->dispatch('scroll-down');
-
+            $this->selectConversation($targetPhone);
         } else {
             Notification::make()
                 ->title('Error al enviar')
