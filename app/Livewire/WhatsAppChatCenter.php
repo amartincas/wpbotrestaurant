@@ -430,11 +430,16 @@ class WhatsAppChatCenter extends Component
         }
 
         if ($sent) {
+            $renderedBody = $template->body;
+            foreach (array_values($resolvedValues) as $index => $value) {
+                $placeholder = '{{'. ($index + 1). '}}';
+                $renderedBody = str_replace($placeholder, $value, $renderedBody);
+            }
             // Save the template message to the chat history so it appears in the UI
             WhatsAppMessage::create([
                 'store_id'       => $storeId,
                 'customer_phone' => $this->selectedPhone,
-                'content'        => $template->body_preview, // use body_preview as the displayed text
+                'content'        => $renderedBody,
                 'role'           => 'assistant',
             ]);
 
