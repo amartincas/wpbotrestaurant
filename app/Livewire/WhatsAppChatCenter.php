@@ -396,8 +396,14 @@ class WhatsAppChatCenter extends Component
         $leadData = [
             'customer_name'  => $lead?->customer_name  ?? '',
             'customer_phone' => $lead?->customer_phone ?? '',
-            'product_name'   => $lead?->product_name   ?? '',
+            'product_service_name'   => $lead?->product_service_name   ?? '',
         ];
+
+        Log::info('DEBUG sendTemplate', [
+            'customValues_llegan' => $customValues,
+            'parametersMap_BD' => $parametersMap,
+            'leadData' => $leadData,
+        ]);
 
         $resolvedValues = [];
         foreach ($parametersMap as $position => $fieldKey) {
@@ -408,6 +414,8 @@ class WhatsAppChatCenter extends Component
                 : ($leadData[$fieldKey] ?? '');
         }
         ksort($resolvedValues);
+
+        Log::info('DEBUG resolvedValues', ['resolvedValues' => array_values($resolvedValues)]);
 
         $sent = WhatsAppService::sendTemplateMessage(
             to:           $this->selectedPhone,

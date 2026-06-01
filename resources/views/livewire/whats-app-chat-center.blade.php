@@ -37,15 +37,15 @@
                 this.currentTemplateId    = id;
                 this.selectedTemplateName = name;
                 this.currentParamsMap     = paramsMap;
+                console.log('selectTemplate paramsMap', paramsMap);
                 this.templateFormVisible  = true;
             },
 
             async submitTemplate() {
-                const inputs = this.$el.querySelectorAll('.tpl-param');
-                const customValues = [];
-                inputs.forEach(input => {
-                    customValues.push(input.value);
-                });
+                const customValues = Array.from(this.$el.querySelectorAll('.tpl-param'))
+                .sort((a,b) => Number(a.dataset.key) - Number(b.dataset.key))
+                .map(i => i.value.trim());
+                console.log('submitTemplate customValues', customValues);
 
                 const chatComponent = Livewire.all().find(c => c.name === 'whats-app-chat-center');
 
