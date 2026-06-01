@@ -28,6 +28,7 @@
                 this.currentTemplateId    = null;
                 this.selectedTemplateName = '';
                 this.currentParamsMap     = {};
+                this.templateValues       = [];
             },
 
             closeModal() {
@@ -40,6 +41,7 @@
                 this.currentParamsMap     = paramsMap;
                 this.templateValues = Object.keys(paramsMap).map(() => '');
                 console.log('selectTemplate paramsMap', paramsMap);
+                console.log('templateValues inicializado', this.templateValues);
                 this.templateFormVisible  = true;
             },
 
@@ -163,6 +165,7 @@
     --}}
     <div
         x-data="templateModal"
+        wire:ignore
         data-lead-id="{{ $selectedLeadId ?? 0 }}"
         data-api-token="{{ Auth::user()->api_token ?? '' }}"
         data-csrf-token="{{ csrf_token() }}"
