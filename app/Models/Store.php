@@ -18,6 +18,9 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
     'wa_phone_number_id',
     'wa_business_account_id',
     'wa_verify_token',
+    'store_whatsapp',
+    'store_order_template',
+    'store_order_template_lang',
 ])]
 class Store extends Model
 {
@@ -42,5 +45,14 @@ class Store extends Model
     public function conversations(): HasMany
     {
         return $this->hasMany(Conversation::class);
+    }
+
+    /**
+     * Verifica si el store tiene configurada la notificación al restaurante.
+     */
+    public function hasRestaurantNotification(): bool
+    {
+        return !empty($this->store_whatsapp)
+            && !empty($this->store_order_template);
     }
 }

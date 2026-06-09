@@ -277,7 +277,7 @@ class ProcessWhatsAppMessage implements ShouldQueue
                     'has_lead_token' => $hasLeadToken,
                 ]);
 
-                Lead::create([
+                $lead = Lead::create([
                     'store_id' => $this->store->id,
                     'customer_phone' => $this->from,
                     'customer_name' => $leadData['customer_name'] ?? null,
@@ -295,6 +295,14 @@ class ProcessWhatsAppMessage implements ShouldQueue
                     'product_service_name' => $leadData['product_service_name'] ?? null,
                     'completion_method' => $hasLeadToken ? 'explicit_token' : 'heuristic_fallback',
                 ]);
+
+                // =====================================================
+                // SPRINT 1: Notificación automática al restaurante
+                // Se envía inmediatamente después de crear el lead.
+                // Usa plantilla Meta configurada en el store para poder
+                // enviar a números que nunca han iniciado conversación.
+                // =====================================================
+                $this->notifyRestaurant($lead, $leadData);
             }
 
             // Process AI response to extract and send images
@@ -363,6 +371,76 @@ class ProcessWhatsAppMessage implements ShouldQueue
     /**
      * Handle a job failure.
      */
+    /**
+     * Envía notificación de nuevo pedido al WhatsApp del restaurante.
+     *
+     * Usa plantilla Meta (HSM) aprobada porque el restaurante nunca
+     * inicia conversación con el bot, por lo que no aplica la ventana
+     * de 24 horas de mensajes libres.
+     *
+     * Variables de la plantilla (en orden):
+     *   {{1}} lead_id
+     *   {{2}} customer_name
+     *   {{3}} customer_phone
+     *   {{4}} delivery_address_or_location
+     *   {{5}} product_service_name
+     *   {{6}} valor (summary o precio del producto)
+     *
+     * Si el store no tiene configurados store_whatsapp o
+     * store_order_template, se omite sin lanzar excepción.
+     */
+    private function notifyRestaurant(Lead $lead, array $leadData): void
+    {
+        if (!$this->store->hasRestaurantNotification()) {
+            Log::info('RESTAURANT_NOTIFY: Skipped — store_whatsapp or store_order_template not configured', [
+                'store_id' => $this->store->id,
+            ]);
+            return;
+        }
+
+        try {
+            $variables = [
+                (string) $lead->id,
+                $leadData['customer_name'] ?? 'N/A',
+                $this->from,
+                $leadData['delivery_address_or_location'] ?? 'N/A',
+                $leadData['product_service_name'] ?? 'N/A',
+                $lead->summary ?? 'N/A',
+            ];
+
+            $sent = WhatsAppService::sendTemplateMessage(
+                to: $this->store->store_whatsapp,
+                templateName: $this->store->store_order_template,
+                languageCode: $this->store->store_order_template_lang ?? 'es_CO',
+                variables: $variables,
+                store: $this->store,
+            );
+
+            if ($sent) {
+                Log::info('RESTAURANT_NOTIFY: Pedido enviado al restaurante', [
+                    'store_id'   => $this->store->id,
+                    'lead_id'    => $lead->id,
+                    'restaurant' => $this->store->store_whatsapp,
+                    'template'   => $this->store->store_order_template,
+                ]);
+            } else {
+                Log::warning('RESTAURANT_NOTIFY: Fallo al enviar pedido al restaurante', [
+                    'store_id'   => $this->store->id,
+                    'lead_id'    => $lead->id,
+                    'restaurant' => $this->store->store_whatsapp,
+                ]);
+            }
+        } catch (\Exception $e) {
+            // No relanzamos: un fallo en la notificación al restaurante
+            // NO debe cancelar ni reintentar el job principal.
+            Log::error('RESTAURANT_NOTIFY: Excepción al notificar restaurante', [
+                'store_id' => $this->store->id,
+                'lead_id'  => $lead->id,
+                'error'    => $e->getMessage(),
+            ]);
+        }
+    }
+
     public function failed(\Throwable $exception): void
     {
         Log::error('Job ProcessWhatsAppMessage failed after max retries', [
