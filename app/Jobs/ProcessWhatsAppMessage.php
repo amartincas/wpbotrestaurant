@@ -239,7 +239,7 @@ class ProcessWhatsAppMessage implements ShouldQueue
             $systemPrompt .= "\n\n### SYSTEM METADATA:\n";
             $systemPrompt .= "Current Date/Time: " . now()->format('Y-m-d H:i:s') . "\n";
             $systemPrompt .= "Lead Completion Signal: [LEAD_COMPLETE]\n";
-            $systemPrompt .= "When the customer has confirmed a purchase, an order, or provided enough information to create a lead, append the exact token [LEAD_COMPLETE] at the end of your response. Do not use any other variation of that token.\n";
+            $systemPrompt .= "ONLY append [LEAD_COMPLETE] when the customer has EXPLICITLY confirmed the order with a clear affirmative response (sí, confirmo, correcto, acepto, listo, dale, de acuerdo) AFTER you have shown the full order summary. Never emit this token before showing the summary. Never emit this token more than once per conversation unless the customer explicitly places a NEW and SEPARATE order after the previous one was already confirmed.\n";
 
             // Get the configured AI service for this store
             $aiEngine = AIServiceFactory::make($this->store);
