@@ -399,11 +399,20 @@ class ProcessWhatsAppMessage implements ShouldQueue
         }
 
         try {
+            // Variables en el orden exacto de la plantilla Meta aprobada:
+            // {{1}} nombre del restaurante  → store->name
+            // {{2}} lead_id                 → lead->id
+            // {{3}} customer_name           → leadData
+            // {{4}} delivery_address        → leadData
+            // {{5}} customer_phone          → this->from
+            // {{6}} product_service_name    → leadData
+            // {{7}} valor                   → lead->summary (incluye extras negociados)
             $variables = [
+                $this->store->name,
                 (string) $lead->id,
                 $leadData['customer_name'] ?? 'N/A',
-                $this->from,
                 $leadData['delivery_address_or_location'] ?? 'N/A',
+                $this->from,
                 $leadData['product_service_name'] ?? 'N/A',
                 $lead->summary ?? 'N/A',
             ];
