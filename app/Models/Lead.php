@@ -50,9 +50,9 @@ class Lead extends Model
 
     // Mensajes que el bot envía al cliente por cada cambio de estado
     const STATUS_MESSAGES = [
-        self::STATUS_ACEPTADO       => '✅ ¡Buenas noticias! El restaurante recibió tu pedido y ya inició la preparación. Te avisamos cuando esté listo.',
-        self::STATUS_LISTO          => '📦 ¡Tu pedido está listo! Ya salió para entrega.',
-        self::STATUS_DESPACHADO     => '🚚 Tu pedido ha sido despachado. Pronto estará en camino.',
+        self::STATUS_ACEPTADO       => '✅ ¡Buenas noticias! Ya inició la preparación de tu pedido. Te estaremos actualizando hasta que sea entregado.',
+        self::STATUS_LISTO          => '📦 ¡Tu pedido está listo y será entregado al domiciliario!',
+        self::STATUS_DESPACHADO     => '🚚 Tu pedido ha sido despachado y va en camino a ser entregado.',
         self::STATUS_ENTREGADO      => '🎉 ¡Tu pedido fue entregado! Gracias por tu compra. ¡Que lo disfrutes!',
         self::STATUS_CANCELADO      => '❌ Tu pedido fue cancelado. Si tienes dudas, escríbenos y te ayudamos.',
     ];
