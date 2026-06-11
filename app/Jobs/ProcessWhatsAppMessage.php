@@ -240,10 +240,6 @@ class ProcessWhatsAppMessage implements ShouldQueue
             // el estado más reciente cuando el cliente pregunte por su pedido.
             $activeLead = \App\Models\Lead::where('store_id', $this->store->id)
                 ->where('customer_phone', $this->from)
-                ->whereNotIn('status', [
-                    \App\Models\Lead::STATUS_ENTREGADO,
-                    \App\Models\Lead::STATUS_CANCELADO,
-                ])
                 ->latest()
                 ->first();
 
