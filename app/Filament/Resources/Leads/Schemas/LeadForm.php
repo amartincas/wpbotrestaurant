@@ -46,8 +46,8 @@ class LeadForm
                     ->options([
                         Lead::STATUS_PENDIENTE      => '⏳ Pendiente',
                         Lead::STATUS_ACEPTADO       => '✅ Aceptado',
-                        Lead::STATUS_EN_PREPARACION => '🍗 En Preparación',
                         Lead::STATUS_LISTO          => '📦 Listo',
+                        Lead::STATUS_DESPACHADO     => '🚚 Despachado',
                         Lead::STATUS_ENTREGADO      => '🎉 Entregado',
                         Lead::STATUS_CANCELADO      => '❌ Cancelado',
                     ])
