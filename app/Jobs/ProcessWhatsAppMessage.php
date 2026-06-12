@@ -537,13 +537,24 @@ class ProcessWhatsAppMessage implements ShouldQueue
             // Variables en el orden exacto de la plantilla Meta:
             // {{1}} store name  {{2}} lead_id  {{3}} customer_name
             // {{4}} address     {{5}} phone     {{6}} product  {{7}} valor
+            // Para {{6}} usar product_name del snapshot (nombre limpio del producto)
+            // con fallback a product_service_name si el snapshot no lo resolvió.
+            $productForTemplate = $lead->product_name
+                ?? $leadData['product_service_name']
+                ?? 'N/A';
+
+            // Si hay extras, agregarlos al texto del producto
+            if (!empty($leadData['order_extras'])) {
+                $productForTemplate .= ' + ' . $leadData['order_extras'];
+            }
+
             $variables = [
                 $this->store->name,
                 (string) $lead->id,
                 $leadData['customer_name'] ?? 'N/A',
                 $leadData['delivery_address_or_location'] ?? 'N/A',
                 $this->from,
-                $leadData['product_service_name'] ?? 'N/A',
+                $productForTemplate,
                 $valor,
             ];
 
