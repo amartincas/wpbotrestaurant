@@ -313,15 +313,25 @@ class ProcessWhatsAppMessage implements ShouldQueue
                     'has_lead_token' => $hasLeadToken,
                 ]);
 
+                // Resolver snapshot de precios desde la BD
+                $snapshot = $this->resolveOrderSnapshot($leadData);
+
                 $lead = Lead::create([
-                    'store_id' => $this->store->id,
-                    'customer_phone' => $this->from,
-                    'customer_name' => $leadData['customer_name'] ?? null,
+                    'store_id'                     => $this->store->id,
+                    'customer_phone'               => $this->from,
+                    'customer_name'                => $leadData['customer_name'] ?? null,
                     'delivery_address_or_location' => $leadData['delivery_address_or_location'] ?? null,
-                    'product_service_name' => $leadData['product_service_name'] ?? null,
-                    'total_amount' => $leadData['total_amount'] ?? null,
-                    'summary' => $messageToSend,
-                    'is_processed' => false,
+                    'product_service_name'         => $leadData['product_service_name'] ?? null,
+                    'product_name'                 => $snapshot['product_name'],
+                    'product_sale_price'           => $snapshot['product_sale_price'],
+                    'product_store_price'          => $snapshot['product_store_price'],
+                    'extras_detail'                => $snapshot['extras_detail'],
+                    'extras_sale_total'            => $snapshot['extras_sale_total'],
+                    'extras_store_total'           => $snapshot['extras_store_total'],
+                    'comments'                     => $leadData['comments'] ?? null,
+                    'total_amount'                 => $leadData['total_amount'] ?? null,
+                    'summary'                      => $messageToSend,
+                    'is_processed'                 => false,
                 ]);
 
                 Log::info('Lead created from WhatsApp conversation', [
@@ -414,7 +424,81 @@ class ProcessWhatsAppMessage implements ShouldQueue
      *   {{5}} customer_phone
      *   {{6}} product_service_name
      *   {{7}} total_amount
+    /**
+     * Resuelve el snapshot de precios del pedido desde la BD.
+     * Garantiza inmutabilidad histórica de precios.
      */
+    private function resolveOrderSnapshot(array $leadData): array
+    {
+        $snapshot = [
+            'product_name'        => null,
+            'product_sale_price'  => null,
+            'product_store_price' => null,
+            'extras_detail'       => null,
+            'extras_sale_total'   => 0,
+            'extras_store_total'  => 0,
+        ];
+
+        $productName = $leadData['product_service_name'] ?? null;
+        if (!$productName) {
+            return $snapshot;
+        }
+
+        $product = \App\Models\Product::where('store_id', $this->store->id)
+            ->where('name', 'like', '%' . $productName . '%')
+            ->with('availableExtras')
+            ->first();
+
+        if (!$product) {
+            return $snapshot;
+        }
+
+        $snapshot['product_name']        = $product->name;
+        $snapshot['product_sale_price']  = $product->price;
+        $snapshot['product_store_price'] = $product->store_price;
+
+        $orderExtras = $leadData['order_extras'] ?? null;
+        if (!$orderExtras || $product->availableExtras->isEmpty()) {
+            return $snapshot;
+        }
+
+        $requestedExtras  = array_map('trim', explode(',', $orderExtras));
+        $extrasDetail     = [];
+        $extrasSaleTotal  = 0;
+        $extrasStoreTotal = 0;
+
+        foreach ($requestedExtras as $requestedName) {
+            $extra = $product->availableExtras
+                ->first(fn ($e) => stripos($e->name, $requestedName) !== false
+                    || stripos($requestedName, $e->name) !== false);
+
+            if ($extra) {
+                $extrasDetail[]    = [
+                    'name'             => $extra->name,
+                    'sale_price'       => (float) $extra->sale_price,
+                    'restaurant_price' => (float) $extra->restaurant_price,
+                ];
+                $extrasSaleTotal  += (float) $extra->sale_price;
+                $extrasStoreTotal += (float) $extra->restaurant_price;
+                Log::info('SNAPSHOT: Extra resuelto', ['extra' => $extra->name, 'sale_price' => $extra->sale_price]);
+            } else {
+                Log::warning('SNAPSHOT: Extra no encontrado en BD', ['requested' => $requestedName]);
+            }
+        }
+
+        $snapshot['extras_detail']      = !empty($extrasDetail) ? $extrasDetail : null;
+        $snapshot['extras_sale_total']  = $extrasSaleTotal;
+        $snapshot['extras_store_total'] = $extrasStoreTotal;
+
+        Log::info('SNAPSHOT: Resuelto', [
+            'product'      => $snapshot['product_name'],
+            'extras_count' => count($extrasDetail),
+            'extras_total' => $extrasSaleTotal,
+        ]);
+
+        return $snapshot;
+    }
+
     private function notifyRestaurant(Lead $lead, array $leadData): void
     {
         if (!$this->store->hasRestaurantNotification()) {
@@ -784,6 +868,8 @@ class ProcessWhatsAppMessage implements ShouldQueue
             'delivery_address_or_location' => null,
             'product_service_name' => null,
             'total_amount' => null,
+            'order_extras' => null,
+            'comments' => null,
         ];
 
         try {
@@ -804,7 +890,9 @@ Return ONLY valid JSON (no markdown, no code blocks, no extra text):
   "customer_name": "extracted name or null",
   "delivery_address_or_location": "address or null",
   "product_service_name": "CURRENT confirmed service only - not from earlier in conversation",
-  "total_amount": "total order value as plain number without symbols, e.g. 48900, or null if not confirmed"
+  "total_amount": "total order value as plain number without symbols, e.g. 48900, or null if not confirmed",
+  "order_extras": "comma separated list of extras the customer confirmed, exactly as named in the catalog, or null if none",
+  "comments": "any special instructions or observations from the customer about the order, e.g. no onion, extra sauce, or null if none"
 }
 
 CONVERSATION:
@@ -870,6 +958,8 @@ PROMPT;
                 $leadData['delivery_address_or_location'] = $this->sanitizeString($extracted['delivery_address_or_location'] ?? null, 255);
                 $leadData['product_service_name'] = $this->sanitizeString($extracted['product_service_name'] ?? null, 150);
                 $leadData['total_amount'] = $this->sanitizeString($extracted['total_amount'] ?? null, 50);
+                $leadData['order_extras'] = $this->sanitizeString($extracted['order_extras'] ?? null, 255);
+                $leadData['comments'] = $this->sanitizeString($extracted['comments'] ?? null, 500);
 
                 Log::info('Lead Data Successfully Extracted via AI', [
                     'store_id' => $this->store->id,

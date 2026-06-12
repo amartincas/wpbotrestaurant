@@ -52,9 +52,9 @@ class ProductFinderService
             ]);
 
             $products = Product::where('store_id', $storeId)
-                ->with('images')
+                ->with(['images', 'availableExtras'])
                 ->limit($limit)
-                ->get(['id', 'name', 'price', 'description', 'stock', 'type', 'ai_sales_strategy', 'faq_context', 'required_customer_info']);
+                ->get(['id', 'name', 'price', 'store_price', 'description', 'stock', 'type', 'ai_sales_strategy', 'faq_context', 'required_customer_info']);
         } else {
             // Specific search query - use LIKE with wildcards
             $searchTerm = "%{$query}%";
@@ -80,9 +80,9 @@ class ProductFinderService
                     $builder->where('name', 'LIKE', $searchTerm)
                         ->orWhere('description', 'LIKE', $searchTerm);
                 })
-                ->with('images')
+                ->with(['images', 'availableExtras'])
                 ->limit($limit)
-                ->get(['id', 'name', 'price', 'description', 'stock', 'type', 'ai_sales_strategy', 'faq_context', 'required_customer_info']);
+                ->get(['id', 'name', 'price', 'store_price', 'description', 'stock', 'type', 'ai_sales_strategy', 'faq_context', 'required_customer_info']);
 
             Log::info("PRODUCT_FINDER: Search result count", [
                 'store_id' => $storeId,
@@ -98,9 +98,9 @@ class ProductFinderService
                 ]);
 
                 $products = Product::where('store_id', $storeId)
-                    ->with('images')
+                    ->with(['images', 'availableExtras'])
                     ->limit($limit)
-                    ->get(['id', 'name', 'price', 'description', 'stock', 'type', 'ai_sales_strategy', 'faq_context', 'required_customer_info']);
+                    ->get(['id', 'name', 'price', 'store_price', 'description', 'stock', 'type', 'ai_sales_strategy', 'faq_context', 'required_customer_info']);
 
                 Log::info("PRODUCT_FINDER: Fallback catalog result", [
                     'store_id' => $storeId,
@@ -223,6 +223,18 @@ class ProductFinderService
 
             if (!empty($product->required_customer_info)) {
                 $formatted .= "  📋 Required Data: " . $product->required_customer_info . "\n";
+            }
+
+            // Extras disponibles del producto
+            if ($product->availableExtras && $product->availableExtras->isNotEmpty()) {
+                $formatted .= "  ➕ **Extras disponibles:**\n";
+                foreach ($product->availableExtras as $extra) {
+                    $formatted .= "    • " . $extra->name
+                        . " — $" . number_format($extra->sale_price, 0, ',', '.')
+                        . ($extra->description ? " (" . $extra->description . ")" : "")
+                        . "\n";
+                }
+                $formatted .= "  ⚠️ Solo puedes ofrecer los extras listados. Si el cliente pide algo no listado, indica que no está disponible.\n";
             }
 
             $formatted .= "\n";
