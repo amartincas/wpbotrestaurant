@@ -14,6 +14,13 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
     'delivery_address_or_location',
     'location',
     'product_service_name',
+    'product_name',
+    'product_sale_price',
+    'product_store_price',
+    'extras_detail',
+    'extras_sale_total',
+    'extras_store_total',
+    'comments',
     'total_amount',
     'status',
     'summary',
@@ -24,44 +31,45 @@ class Lead extends Model
 {
     use HasFactory;
 
-    // Estados válidos del ciclo de vida del pedido
-    const STATUS_PENDIENTE       = 'pendiente';
-    const STATUS_ACEPTADO        = 'aceptado';
-    const STATUS_LISTO           = 'listo';
-    const STATUS_DESPACHADO      = 'despachado';
-    const STATUS_ENTREGADO       = 'entregado';
-    const STATUS_CANCELADO       = 'cancelado';
+    const STATUS_PENDIENTE   = 'pendiente';
+    const STATUS_ACEPTADO    = 'aceptado';
+    const STATUS_LISTO       = 'listo';
+    const STATUS_DESPACHADO  = 'despachado';
+    const STATUS_ENTREGADO   = 'entregado';
+    const STATUS_CANCELADO   = 'cancelado';
 
-    // Mapa de texto recibido del restaurante → status interno
-    // Usado para interpretar botones y comandos de texto
     const STATUS_MAP = [
-        'aceptado'       => self::STATUS_ACEPTADO,
-        'accepted'       => self::STATUS_ACEPTADO,
-        'listo'          => self::STATUS_LISTO,
-        'ready'          => self::STATUS_LISTO,
-        'despachado'     => self::STATUS_DESPACHADO,
-        'shipped'        => self::STATUS_DESPACHADO,
-        'entregado'      => self::STATUS_ENTREGADO,
-        'delivered'      => self::STATUS_ENTREGADO,
-        'cancelado'      => self::STATUS_CANCELADO,
-        'cancelled'      => self::STATUS_CANCELADO,
-        'canceled'       => self::STATUS_CANCELADO,
+        'aceptado'   => self::STATUS_ACEPTADO,
+        'accepted'   => self::STATUS_ACEPTADO,
+        'listo'      => self::STATUS_LISTO,
+        'ready'      => self::STATUS_LISTO,
+        'despachado' => self::STATUS_DESPACHADO,
+        'shipped'    => self::STATUS_DESPACHADO,
+        'entregado'  => self::STATUS_ENTREGADO,
+        'delivered'  => self::STATUS_ENTREGADO,
+        'cancelado'  => self::STATUS_CANCELADO,
+        'cancelled'  => self::STATUS_CANCELADO,
+        'canceled'   => self::STATUS_CANCELADO,
     ];
 
-    // Mensajes que el bot envía al cliente por cada cambio de estado
     const STATUS_MESSAGES = [
-        self::STATUS_ACEPTADO       => '✅ ¡Buenas noticias! Ya inició la preparación de tu pedido. Te estaremos actualizando hasta que sea entregado.',
-        self::STATUS_LISTO          => '📦 ¡Tu pedido está listo y será entregado al domiciliario!',
-        self::STATUS_DESPACHADO     => '🚚 Tu pedido ha sido despachado y va en camino a ser entregado.',
-        self::STATUS_ENTREGADO      => '🎉 ¡Tu pedido fue entregado! Gracias por tu compra. ¡Que lo disfrutes!',
-        self::STATUS_CANCELADO      => '❌ Tu pedido fue cancelado. Si tienes dudas, escríbenos y te ayudamos.',
+        self::STATUS_ACEPTADO   => '✅ ¡Buenas noticias! El restaurante recibió tu pedido y ya inició la preparación. Te avisamos cuando esté listo.',
+        self::STATUS_LISTO      => '📦 ¡Tu pedido está listo! Ya salió para entrega.',
+        self::STATUS_DESPACHADO => '🚚 Tu pedido ha sido despachado y está en camino.',
+        self::STATUS_ENTREGADO  => '🎉 ¡Tu pedido fue entregado! Gracias por tu compra. ¡Que lo disfrutes!',
+        self::STATUS_CANCELADO  => '❌ Tu pedido fue cancelado. Si tienes dudas, escríbenos y te ayudamos.',
     ];
 
     protected function casts(): array
     {
         return [
-            'is_processed' => 'boolean',
-            'bot_active'   => 'boolean',
+            'is_processed'       => 'boolean',
+            'bot_active'         => 'boolean',
+            'extras_detail'      => 'array',
+            'product_sale_price' => 'decimal:2',
+            'product_store_price'=> 'decimal:2',
+            'extras_sale_total'  => 'decimal:2',
+            'extras_store_total' => 'decimal:2',
         ];
     }
 
@@ -88,21 +96,26 @@ class Lead extends Model
             ->get();
     }
 
-    /**
-     * Resuelve el status interno a partir del texto recibido del restaurante.
-     * Retorna null si el texto no corresponde a ningún estado conocido.
-     */
     public static function resolveStatus(string $text): ?string
     {
         $normalized = strtolower(trim($text));
         return self::STATUS_MAP[$normalized] ?? null;
     }
 
-    /**
-     * Obtiene el mensaje de notificación al cliente para un status dado.
-     */
     public static function statusMessage(string $status): ?string
     {
         return self::STATUS_MESSAGES[$status] ?? null;
+    }
+
+    /**
+     * Calcula el margen bruto de este lead.
+     * Margen = total_amount - product_store_price - extras_store_total
+     */
+    public function getMargin(): float
+    {
+        $total       = (float) preg_replace('/[^0-9.]/', '', $this->total_amount ?? '0');
+        $storeCost   = (float) ($this->product_store_price ?? 0);
+        $extrasCost  = (float) ($this->extras_store_total ?? 0);
+        return $total - $storeCost - $extrasCost;
     }
 }
