@@ -313,13 +313,13 @@ class ProcessWhatsAppMessage implements ShouldQueue
                     'has_lead_token' => $hasLeadToken,
                 ]);
 
-                Lead::create([
+                $lead = Lead::create([
                     'store_id' => $this->store->id,
                     'customer_phone' => $this->from,
                     'customer_name' => $leadData['customer_name'] ?? null,
                     'delivery_address_or_location' => $leadData['delivery_address_or_location'] ?? null,
                     'product_service_name' => $leadData['product_service_name'] ?? null,
-                    'preferred_date_time' => $leadData['preferred_date_time'] ?? null,
+                    'total_amount' => $leadData['total_amount'] ?? null,
                     'summary' => $messageToSend,
                     'is_processed' => false,
                 ]);
@@ -331,6 +331,9 @@ class ProcessWhatsAppMessage implements ShouldQueue
                     'product_service_name' => $leadData['product_service_name'] ?? null,
                     'completion_method' => $hasLeadToken ? 'explicit_token' : 'heuristic_fallback',
                 ]);
+
+                // Sprint 1: Notificación automática al restaurante
+                $this->notifyRestaurant($lead, $leadData);
             }
 
             // Process AI response to extract and send images
@@ -399,6 +402,100 @@ class ProcessWhatsAppMessage implements ShouldQueue
     /**
      * Handle a job failure.
      */
+    /**
+     * Envía notificación de nuevo pedido al WhatsApp del restaurante.
+     * Usa plantilla Meta (HSM) porque el restaurante no inicia conversación.
+     *
+     * Variables de la plantilla:
+     *   {{1}} nombre del restaurante
+     *   {{2}} lead_id
+     *   {{3}} customer_name
+     *   {{4}} delivery_address_or_location
+     *   {{5}} customer_phone
+     *   {{6}} product_service_name
+     *   {{7}} total_amount
+     */
+    private function notifyRestaurant(Lead $lead, array $leadData): void
+    {
+        if (!$this->store->hasRestaurantNotification()) {
+            Log::info('RESTAURANT_NOTIFY: Skipped — store_whatsapp or store_order_template not configured', [
+                'store_id' => $this->store->id,
+            ]);
+            return;
+        }
+
+        try {
+            // Valor del pedido: total_amount extraído por la IA (incluye extras).
+            // Fallback al precio base del producto en la BD.
+            $valor = null;
+
+            if (!empty($lead->total_amount)) {
+                $raw = preg_replace('/[^0-9.]/', '', $lead->total_amount);
+                $valor = is_numeric($raw)
+                    ? '$' . number_format((float) $raw, 0, ',', '.')
+                    : $lead->total_amount;
+            }
+
+            if (!$valor) {
+                $productName = $leadData['product_service_name'] ?? null;
+                if ($productName) {
+                    $product = \App\Models\Product::where('store_id', $this->store->id)
+                        ->where('name', 'like', '%' . $productName . '%')
+                        ->first();
+                    if ($product) {
+                        $valor = '$' . number_format($product->price, 0, ',', '.');
+                    }
+                }
+            }
+
+            $valor = $valor ?? 'Consultar';
+
+            // Variables en el orden exacto de la plantilla Meta:
+            // {{1}} store name  {{2}} lead_id  {{3}} customer_name
+            // {{4}} address     {{5}} phone     {{6}} product  {{7}} valor
+            $variables = [
+                $this->store->name,
+                (string) $lead->id,
+                $leadData['customer_name'] ?? 'N/A',
+                $leadData['delivery_address_or_location'] ?? 'N/A',
+                $this->from,
+                $leadData['product_service_name'] ?? 'N/A',
+                $valor,
+            ];
+
+            $sent = WhatsAppService::sendTemplateMessage(
+                to: $this->store->store_whatsapp,
+                templateName: $this->store->store_order_template,
+                languageCode: $this->store->store_order_template_lang ?? 'es_CO',
+                variables: $variables,
+                store: $this->store,
+            );
+
+            if ($sent) {
+                Log::info('RESTAURANT_NOTIFY: Pedido enviado al restaurante', [
+                    'store_id'   => $this->store->id,
+                    'lead_id'    => $lead->id,
+                    'restaurant' => $this->store->store_whatsapp,
+                    'template'   => $this->store->store_order_template,
+                    'valor'      => $valor,
+                ]);
+            } else {
+                Log::warning('RESTAURANT_NOTIFY: Fallo al enviar pedido al restaurante', [
+                    'store_id'   => $this->store->id,
+                    'lead_id'    => $lead->id,
+                    'restaurant' => $this->store->store_whatsapp,
+                ]);
+            }
+        } catch (\Exception $e) {
+            // No relanzamos: fallo en notificación NO debe cancelar el job principal
+            Log::error('RESTAURANT_NOTIFY: Excepción al notificar restaurante', [
+                'store_id' => $this->store->id,
+                'lead_id'  => $lead->id,
+                'error'    => $e->getMessage(),
+            ]);
+        }
+    }
+
     public function failed(\Throwable $exception): void
     {
         Log::error('Job ProcessWhatsAppMessage failed after max retries', [
@@ -686,7 +783,7 @@ class ProcessWhatsAppMessage implements ShouldQueue
             'customer_name' => null,
             'delivery_address_or_location' => null,
             'product_service_name' => null,
-            'preferred_date_time' => null,
+            'total_amount' => null,
         ];
 
         try {
@@ -707,7 +804,7 @@ Return ONLY valid JSON (no markdown, no code blocks, no extra text):
   "customer_name": "extracted name or null",
   "delivery_address_or_location": "address or null",
   "product_service_name": "CURRENT confirmed service only - not from earlier in conversation",
-  "preferred_date_time": "date/time or null"
+  "total_amount": "total order value as plain number without symbols, e.g. 48900, or null if not confirmed"
 }
 
 CONVERSATION:
@@ -772,7 +869,7 @@ PROMPT;
                 $leadData['customer_name'] = $this->sanitizeString($extracted['customer_name'] ?? null, 100);
                 $leadData['delivery_address_or_location'] = $this->sanitizeString($extracted['delivery_address_or_location'] ?? null, 255);
                 $leadData['product_service_name'] = $this->sanitizeString($extracted['product_service_name'] ?? null, 150);
-                $leadData['preferred_date_time'] = $this->sanitizeString($extracted['preferred_date_time'] ?? null, 150);
+                $leadData['total_amount'] = $this->sanitizeString($extracted['total_amount'] ?? null, 50);
 
                 Log::info('Lead Data Successfully Extracted via AI', [
                     'store_id' => $this->store->id,
@@ -881,7 +978,7 @@ PROMPT;
             'customer_name' => null,
             'delivery_address_or_location' => null,
             'product_service_name' => null,
-            'preferred_date_time' => null,
+            'total_amount' => null,
         ];
 
         // Combine recent user messages only (not full history)
@@ -926,7 +1023,7 @@ PROMPT;
         if (preg_match('/(?:date|time|when|schedule|book|appointment)\s+(?:for|at|on|:)?\s*([^,\.]*\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}[^,\.]*|(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)[^,\.]*|(?:\d{1,2}:\d{2}|\d{1,2}\s*(?:am|pm))[^,\.]*)/i', $allUserMessages, $matches)) {
             $datetime = trim($matches[1]);
             if (strlen($datetime) < 100) {
-                $leadData['preferred_date_time'] = $datetime;
+                // preferred_date_time removed — use total_amount instead
             }
         }
 
@@ -972,7 +1069,7 @@ PROMPT;
             'customer_name' => null,
             'delivery_address_or_location' => null,
             'product_service_name' => null,
-            'preferred_date_time' => null,
+            'total_amount' => null,
         ];
 
         // Combine all user messages from history for analysis
@@ -1016,7 +1113,7 @@ PROMPT;
         if (preg_match('/(?:date|time|when|schedule|book|appointment)\s+(?:for|at|on|:)?\s*([^,\.]*\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}[^,\.]*|(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)[^,\.]*|(?:\d{1,2}:\d{2}|\d{1,2}\s*(?:am|pm))[^,\.]*)/i', $allUserMessages, $matches)) {
             $datetime = trim($matches[1]);
             if (strlen($datetime) < 100) { // Sanity check
-                $leadData['preferred_date_time'] = $datetime;
+                // preferred_date_time removed — use total_amount instead
             }
         }
 
