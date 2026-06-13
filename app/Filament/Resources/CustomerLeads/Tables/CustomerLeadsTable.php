@@ -4,7 +4,7 @@ namespace App\Filament\Resources\CustomerLeads\Tables;
 
 use App\Enums\CustomerLeadSource;
 use App\Enums\CustomerLeadStatus;
-use Filament\Tables\Actions\EditAction;
+use Filament\Actions\EditAction;  // Sin Tables
 use Filament\Tables\Columns\BadgeColumn;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
