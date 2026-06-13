@@ -300,7 +300,14 @@ class ProcessWhatsAppMessage implements ShouldQueue
             $leadData = $this->extractLeadDataWithAI($history, $aiResponse);
             $shouldCreateLead = $this->shouldCreateLeadFromResponse($aiResponse, $leadData, $hasLeadToken);
 
-            if ($shouldCreateLead) {
+            // =====================================================
+            // MODO DEMO: simula el flujo completo sin persistir datos
+            // El bot responde y notifica al store_whatsapp configurado
+            // pero NO crea registros en leads ni en customer_leads.
+            // =====================================================
+            $isDemoMode = $this->store->isDemo();
+
+            if ($shouldCreateLead && !$isDemoMode) {
                 if ($hasLeadToken) {
                     $messageToSend = preg_replace('/\[LEAD_COMPLETE\]/', '', $aiResponse);
                     $messageToSend = trim($messageToSend);
@@ -347,6 +354,23 @@ class ProcessWhatsAppMessage implements ShouldQueue
 
                 // CRM: Registrar pedido en CustomerLead
                 $this->registerOrderInCrm($lead, $leadData);
+
+            } elseif ($shouldCreateLead && $isDemoMode) {
+                // DEMO: limpiar token y notificar sin persistir
+                if ($hasLeadToken) {
+                    $messageToSend = preg_replace('/\[LEAD_COMPLETE\]/', '', $aiResponse);
+                    $messageToSend = trim($messageToSend);
+                }
+
+                Log::info('DEMO_MODE: Pedido simulado — no se persiste en BD', [
+                    'store_id'       => $this->store->id,
+                    'customer_phone' => $this->from,
+                    'product'        => $leadData['product_service_name'] ?? null,
+                    'total_amount'   => $leadData['total_amount'] ?? null,
+                ]);
+
+                // Notificar al store_whatsapp (número demo configurado con STORE command)
+                $this->notifyRestaurantDemo($leadData);
             }
 
             // Process AI response to extract and send images
@@ -551,6 +575,74 @@ class ProcessWhatsAppMessage implements ShouldQueue
         ]);
 
         return $snapshot;
+    }
+
+    /**
+     * Notifica al restaurante en modo DEMO.
+     * Usa el mismo mecanismo que notifyRestaurant() pero sin instancia de Lead.
+     * No persiste nada en la BD — solo envía la plantilla al store_whatsapp.
+     */
+    private function notifyRestaurantDemo(array $leadData): void
+    {
+        if (!$this->store->hasRestaurantNotification()) {
+            Log::info('DEMO_MODE: Skipped notify — store_whatsapp or template not configured', [
+                'store_id' => $this->store->id,
+            ]);
+            return;
+        }
+
+        try {
+            $productName = $leadData['product_service_name'] ?? 'N/A';
+            $valor       = 'N/A';
+
+            if (!empty($leadData['total_amount'])) {
+                $raw   = preg_replace('/[^0-9.]/', '', $leadData['total_amount']);
+                $valor = is_numeric($raw)
+                    ? '$' . number_format((float) $raw, 0, ',', '.')
+                    : $leadData['total_amount'];
+            }
+
+            // Resolver nombre limpio del producto desde BD
+            $product = \App\Models\Product::where('store_id', $this->store->id)
+                ->where('name', 'like', '%' . $productName . '%')
+                ->first();
+
+            $productForTemplate = $product?->name ?? $productName;
+            if (!empty($leadData['order_extras'])) {
+                $productForTemplate .= ' + ' . $leadData['order_extras'];
+            }
+
+            $variables = [
+                '[DEMO] ' . $this->store->name,
+                'DEMO',
+                $leadData['customer_name'] ?? 'N/A',
+                $leadData['delivery_address_or_location'] ?? 'N/A',
+                $this->from,
+                $productForTemplate,
+                $valor,
+            ];
+
+            $sent = WhatsAppService::sendTemplateMessage(
+                to:           $this->store->store_whatsapp,
+                templateName: $this->store->store_order_template,
+                languageCode: $this->store->store_order_template_lang ?? 'es_CO',
+                variables:    $variables,
+                store:        $this->store,
+            );
+
+            Log::info('DEMO_MODE: Notificación demo enviada', [
+                'store_id'  => $this->store->id,
+                'to'        => $this->store->store_whatsapp,
+                'product'   => $productForTemplate,
+                'sent'      => $sent,
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('DEMO_MODE: Error al enviar notificación demo', [
+                'store_id' => $this->store->id,
+                'error'    => $e->getMessage(),
+            ]);
+        }
     }
 
     private function notifyRestaurant(Lead $lead, array $leadData): void

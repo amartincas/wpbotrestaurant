@@ -18,6 +18,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
     'wa_phone_number_id',
     'wa_business_account_id',
     'wa_verify_token',
+    'status',
     'store_whatsapp',
     'store_order_template',
     'store_order_template_lang',
@@ -54,5 +55,20 @@ class Store extends Model
     {
         return !empty($this->store_whatsapp)
             && !empty($this->store_order_template);
+    }
+
+    public function isActive(): bool
+    {
+        return $this->status === 'active';
+    }
+
+    public function isDemo(): bool
+    {
+        return $this->status === 'demo';
+    }
+
+    public function isInactive(): bool
+    {
+        return $this->status === 'inactive';
     }
 }

@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Stores\Schemas;
 
+use Filament\Forms\Components\Placeholder;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Textarea;
@@ -16,6 +17,17 @@ class StoreForm
             ->schema([
                 TextInput::make('name')
                     ->required(),
+
+                Select::make('status')
+                    ->label('Estado del Store')
+                    ->options([
+                        'active'   => '✅ Activo',
+                        'inactive' => '⏸️ Inactivo',
+                        'demo'     => '🎯 Demo',
+                    ])
+                    ->default('active')
+                    ->required()
+                    ->helperText('Demo: simulación completa sin persistir pedidos en BD'),
                 Select::make('personality_type')
                     ->options(['vendedor' => 'Vendedor', 'soporte' => 'Soporte', 'asesor' => 'Asesor'])
                     ->required(),

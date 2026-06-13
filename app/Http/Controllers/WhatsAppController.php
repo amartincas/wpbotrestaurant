@@ -780,13 +780,18 @@ private function handleRestaurantButtonResponse(
         $rest    = trim($matches[2]);
         $updates = [];
 
+        // Extraer STATUS: DEMO o ACTIVE
+        if (preg_match('/^(DEMO|ACTIVE|INACTIVE)$/i', $rest, $sm)) {
+            $updates['status'] = strtolower($sm[1]);
+        }
+
         // Extraer WHATSAPP
         if (preg_match('/WHATSAPP\s+(\d{10,15})/i', $rest, $wm)) {
             $updates['store_whatsapp'] = $wm[1];
         }
 
         // Extraer NOMBRE (todo lo que sigue hasta fin de línea o siguiente clave)
-        if (preg_match('/NOMBRE\s+(.+?)(?:\s+WHATSAPP|$)/i', $rest, $nm)) {
+        if (preg_match('/NOMBRE\s+(.+?)(?:\s+WHATSAPP|\s+DEMO|\s+ACTIVE|$)/i', $rest, $nm)) {
             $updates['name'] = trim($nm[1]);
         }
 
@@ -827,7 +832,12 @@ private function handleRestaurantButtonResponse(
             'updates'  => $command['updates'],
         ]);
 
+        $statusLabels = ['active' => '✅ Activo', 'demo' => '🎯 Demo', 'inactive' => '⏸️ Inactivo'];
         $lines = ["✅ *Store #{$targetStore->id} actualizado:*"];
+        if (isset($command['updates']['status'])) {
+            $label = $statusLabels[$command['updates']['status']] ?? $command['updates']['status'];
+            $lines[] = "🔄 Status: {$label}";
+        }
         if (isset($command['updates']['name'])) {
             $lines[] = "🏪 Nombre: {$command['updates']['name']}";
         }
