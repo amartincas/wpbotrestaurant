@@ -202,11 +202,9 @@ class WhatsAppController extends Controller
                 ->first();
 
             if ($superAdmin) {
+                // ¿Es un comando de reporte?
                 $range = \App\Services\ReportService::parseCommand($textBody);
                 if ($range) {
-                    // Reporte consolidado de TODOS los stores.
-                    // Se usa el store del webhook para enviar la respuesta
-                    // ya que es el que tiene las credenciales de WhatsApp activas.
                     $report = \App\Services\ReportService::superAdminReport(
                         $range['from'],
                         $range['to'],
@@ -221,6 +219,13 @@ class WhatsAppController extends Controller
                         'user_id' => $superAdmin->id,
                         'label'   => $range['label'],
                     ]);
+                    return response('EVENT_RECEIVED', 200);
+                }
+
+                // ¿Es un comando STORE para actualizar configuración?
+                $storeUpdate = $this->parseStoreCommand($textBody);
+                if ($storeUpdate) {
+                    $this->handleStoreCommand($store, $fromPhone, $storeUpdate);
                     return response('EVENT_RECEIVED', 200);
                 }
             }
@@ -753,5 +758,87 @@ private function handleRestaurantButtonResponse(
         }
 
         return Store::where('wa_phone_number_id', (string) $phoneNumberId)->first();
+    }
+
+    /**
+     * Parsea un comando STORE del superadmin.
+     *
+     * Formatos soportados:
+     *   STORE 2 WHATSAPP 573001234567
+     *   STORE 2 NOMBRE Restaurante Manuelita
+     *   STORE 2 WHATSAPP 573001234567 NOMBRE Restaurante Manuelita
+     *
+     * Retorna array con store_id y campos a actualizar, o null si no reconoce el comando.
+     */
+    private function parseStoreCommand(string $text): ?array
+    {
+        if (!preg_match('/^STORE\s+(\d+)\s+(.+)$/i', trim($text), $matches)) {
+            return null;
+        }
+
+        $storeId = (int) $matches[1];
+        $rest    = trim($matches[2]);
+        $updates = [];
+
+        // Extraer WHATSAPP
+        if (preg_match('/WHATSAPP\s+(\d{10,15})/i', $rest, $wm)) {
+            $updates['store_whatsapp'] = $wm[1];
+        }
+
+        // Extraer NOMBRE (todo lo que sigue hasta fin de línea o siguiente clave)
+        if (preg_match('/NOMBRE\s+(.+?)(?:\s+WHATSAPP|$)/i', $rest, $nm)) {
+            $updates['name'] = trim($nm[1]);
+        }
+
+        if (empty($updates)) {
+            return null;
+        }
+
+        return [
+            'store_id' => $storeId,
+            'updates'  => $updates,
+        ];
+    }
+
+    /**
+     * Ejecuta el comando STORE — actualiza los campos del store indicado.
+     * Responde al superadmin con confirmación o error.
+     */
+    private function handleStoreCommand(
+        \App\Models\Store $currentStore,
+        string $fromPhone,
+        array $command
+    ): void {
+        $targetStore = \App\Models\Store::find($command['store_id']);
+
+        if (!$targetStore) {
+            \App\Services\WhatsAppService::sendMessage(
+                to:      $fromPhone,
+                message: "❌ Store #{$command['store_id']} no encontrado.",
+                store:   $currentStore,
+            );
+            return;
+        }
+
+        $targetStore->update($command['updates']);
+
+        Log::info('STORE_COMMAND: Store actualizado por superadmin', [
+            'store_id' => $targetStore->id,
+            'updates'  => $command['updates'],
+        ]);
+
+        $lines = ["✅ *Store #{$targetStore->id} actualizado:*"];
+        if (isset($command['updates']['name'])) {
+            $lines[] = "🏪 Nombre: {$command['updates']['name']}";
+        }
+        if (isset($command['updates']['store_whatsapp'])) {
+            $lines[] = "📱 WhatsApp: {$command['updates']['store_whatsapp']}";
+        }
+
+        \App\Services\WhatsAppService::sendMessage(
+            to:      $fromPhone,
+            message: implode("\n", $lines),
+            store:   $currentStore,
+        );
     }
 }
