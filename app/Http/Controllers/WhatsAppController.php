@@ -114,6 +114,22 @@ class WhatsAppController extends Controller
     $type      = $message['type'] ?? null;
     $fromPhone = $message['from'] ?? null;
 
+    // =========================================================
+    // CRM: Captura automática del lead en cada mensaje entrante
+    // Crea o actualiza el CustomerLead para este contacto.
+    // Solo para mensajes de clientes (no del restaurante ni superadmin).
+    // =========================================================
+    if ($fromPhone && $type !== 'button') {
+        $isRestaurant = \App\Models\Store::where('store_whatsapp', $fromPhone)->exists();
+        $isSuperAdmin = \App\Models\User::where('whatsapp', $fromPhone)
+            ->where('is_super_admin', true)
+            ->exists();
+
+        if (!$isRestaurant && !$isSuperAdmin) {
+            \App\Services\CustomerLeadService::findOrCreateLead($store, $fromPhone);
+        }
+    }
+
     $body    = null;
     $mediaId = null;
 
