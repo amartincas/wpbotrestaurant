@@ -6,7 +6,6 @@ use Filament\Forms\Components\Section;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
-use Filament\Infolists\Components\TextEntry;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Schema;
 
@@ -174,11 +173,6 @@ class StoreWizardForm
                 // Obtener coordenadas desde Google Maps:
                 // Clic derecho en el punto → "¿Qué hay aquí?"
                 // =====================================================
-                TextEntry::make('coverage_help')
-                    ->label('📍 Zona de Cobertura (Bounding Box)')
-                    ->content('Define el rectángulo de entrega con 4 coordenadas obtenidas desde Google Maps. Si no se configura, no se validará cobertura.')
-                    ->columnSpanFull(),
-
                 TextInput::make('store_bound_north')
                     ->label('Norte (Latitud máxima)')
                     ->placeholder('3.4800')
