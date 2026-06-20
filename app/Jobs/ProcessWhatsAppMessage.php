@@ -235,77 +235,7 @@ class ProcessWhatsAppMessage implements ShouldQueue
                 ]);
             }
             
-            // 4. Contexto del cliente conocido (CRM)
-            // Búsqueda en cascada:
-            //   1. Por store_id + customer_phone (cliente del restaurante actual)
-            //   2. Por customer_phone en cualquier store (cliente de la plataforma)
-            // Si se encuentra, se inyectan sus datos para personalizar la experiencia
-            // y precargar nombre, teléfono y dirección sin volver a pedirlos.
-            $knownCustomer = \App\Models\CustomerLead::where('store_id', $this->store->id)
-                ->where('customer_phone', $this->from)
-                ->first();
-
-            $knownCustomerScope = 'store'; // cliente del mismo restaurante
-
-            if (!$knownCustomer) {
-                $knownCustomer = \App\Models\CustomerLead::where('customer_phone', $this->from)
-                    ->whereNotNull('customer_name')
-                    ->latest()
-                    ->first();
-                $knownCustomerScope = 'platform'; // cliente de otro restaurante
-            }
-
-            if ($knownCustomer && !empty($knownCustomer->customer_name)) {
-                // Buscar la dirección del último pedido confirmado
-                $lastOrder = \App\Models\Lead::where('store_id', $this->store->id)
-                    ->where('customer_phone', $this->from)
-                    ->whereNotNull('delivery_address_or_location')
-                    ->whereIn('status', [
-                        \App\Models\Lead::STATUS_ENTREGADO,
-                        \App\Models\Lead::STATUS_DESPACHADO,
-                        \App\Models\Lead::STATUS_LISTO,
-                        \App\Models\Lead::STATUS_ACEPTADO,
-                    ])
-                    ->latest()
-                    ->first();
-
-                $isReturning = $knownCustomer->total_orders > 0;
-
-                $systemPrompt .= "\n\n### CLIENTE CONOCIDO:\n";
-                $systemPrompt .= "Nombre: " . $knownCustomer->customer_name . "\n";
-                $systemPrompt .= "Teléfono: " . $knownCustomer->customer_phone . "\n";
-
-                if ($lastOrder && $lastOrder->delivery_address_or_location) {
-                    $systemPrompt .= "Dirección registrada: " . $lastOrder->delivery_address_or_location . "\n";
-                }
-
-                if ($isReturning) {
-                    $systemPrompt .= "Total pedidos anteriores: " . $knownCustomer->total_orders . "\n";
-                    $systemPrompt .= "\nINSTRUCCIONES:\n";
-                    $systemPrompt .= "- Salúdalo por su nombre desde el PRIMER mensaje: \"¡Hola {$knownCustomer->customer_name}! 👋 Qué gusto tenerte de vuelta.\"\n";
-                } else {
-                    $systemPrompt .= "\nINSTRUCCIONES:\n";
-                    $systemPrompt .= "- Salúdalo por su nombre desde el PRIMER mensaje: \"¡Hola {$knownCustomer->customer_name}! 👋 Bienvenido.\"\n";
-                }
-
-                $systemPrompt .= "- NO vuelvas a pedir su nombre ni teléfono — ya los tienes.\n";
-
-                if ($lastOrder && $lastOrder->delivery_address_or_location) {
-                    $systemPrompt .= "- Cuando necesites la dirección, usa la registrada arriba y pregunta: \"¿Entregamos en {$lastOrder->delivery_address_or_location} o prefieres otra dirección?\"\n";
-                    $systemPrompt .= "- Solo pide dirección nueva si el cliente indica que quiere cambiarla.\n";
-                }
-
-                Log::info('CRM_CONTEXT: Cliente conocido inyectado en prompt', [
-                    'store_id'     => $this->store->id,
-                    'phone'        => $this->from,
-                    'name'         => $knownCustomer->customer_name,
-                    'scope'        => $knownCustomerScope,
-                    'is_returning' => $isReturning,
-                    'has_address'  => !empty($lastOrder?->delivery_address_or_location),
-                ]);
-            }
-
-            // 5. Contexto del pedido activo del cliente (Sprint 2)
+            // 4. Contexto del pedido activo del cliente (Sprint 2)
             // Se consulta en cada mensaje para que la IA siempre tenga
             // el estado más reciente cuando el cliente pregunte por su pedido.
             $activeLead = \App\Models\Lead::where('store_id', $this->store->id)
@@ -661,26 +591,48 @@ class ProcessWhatsAppMessage implements ShouldQueue
             // Variables en el orden exacto de la plantilla Meta:
             // {{1}} store name  {{2}} lead_id  {{3}} customer_name
             // {{4}} address     {{5}} phone     {{6}} product  {{7}} valor
-            // Para {{6}} usar product_name del snapshot (nombre limpio del producto)
-            // con fallback a product_service_name si el snapshot no lo resolvió.
+            // Nombre limpio del producto con extras
             $productForTemplate = $lead->product_name
                 ?? $leadData['product_service_name']
                 ?? 'N/A';
 
-            // Si hay extras, agregarlos al texto del producto
             if (!empty($leadData['order_extras'])) {
                 $productForTemplate .= ' + ' . $leadData['order_extras'];
             }
 
-            $variables = [
-                $this->store->name,
-                (string) $lead->id,
-                $leadData['customer_name'] ?? 'N/A',
-                $leadData['delivery_address_or_location'] ?? 'N/A',
-                $this->from,
-                $productForTemplate,
-                $valor,
-            ];
+            // Variables según la plantilla configurada en el store
+            $templateName = $this->store->store_order_template;
+
+            if ($templateName === 'nuevo_pedido') {
+                // Plantilla original: {{5}} = Teléfono, {{6}} = Producto, {{7}} = Valor
+                $variables = [
+                    $this->store->name,
+                    (string) $lead->id,
+                    $leadData['customer_name'] ?? 'N/A',
+                    $leadData['delivery_address_or_location'] ?? 'N/A',
+                    $this->from,
+                    $productForTemplate,
+                    $valor,
+                ];
+            } else {
+                // Plantilla nueva (pedido_nuevo): {{5}} = Producto, {{6}} = Valor, {{7}} = Ubicación
+                if (!empty($lead->location)) {
+                    [$lat, $lng] = explode(',', $lead->location);
+                    $ubicacion = "https://maps.google.com/?q={$lat},{$lng}";
+                } else {
+                    $ubicacion = 'No compartida';
+                }
+
+                $variables = [
+                    $this->store->name,
+                    (string) $lead->id,
+                    $leadData['customer_name'] ?? 'N/A',
+                    $leadData['delivery_address_or_location'] ?? 'N/A',
+                    $productForTemplate,
+                    $valor,
+                    $ubicacion,
+                ];
+            }
 
             $sent = WhatsAppService::sendTemplateMessage(
                 to: $this->store->store_whatsapp,

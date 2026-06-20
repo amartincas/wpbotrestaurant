@@ -19,6 +19,10 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
     'wa_business_account_id',
     'wa_verify_token',
     'status',
+    'store_bound_north',
+    'store_bound_south',
+    'store_bound_east',
+    'store_bound_west',
     'store_whatsapp',
     'store_order_template',
     'store_order_template_lang',
@@ -55,6 +59,34 @@ class Store extends Model
     {
         return !empty($this->store_whatsapp)
             && !empty($this->store_order_template);
+    }
+
+    /**
+     * Verifica si el store tiene zona de cobertura configurada.
+     */
+    public function hasCoverage(): bool
+    {
+        return !empty($this->store_bound_north)
+            && !empty($this->store_bound_south)
+            && !empty($this->store_bound_east)
+            && !empty($this->store_bound_west);
+    }
+
+    /**
+     * Valida si unas coordenadas están dentro del bounding box.
+     * Retorna true si está dentro, false si está fuera.
+     * Retorna null si el store no tiene cobertura configurada.
+     */
+    public function isWithinCoverage(float $lat, float $lng): ?bool
+    {
+        if (!$this->hasCoverage()) {
+            return null; // Sin configuración → no validar
+        }
+
+        return $lat >= (float) $this->store_bound_south
+            && $lat <= (float) $this->store_bound_north
+            && $lng >= (float) $this->store_bound_west
+            && $lng <= (float) $this->store_bound_east;
     }
 
     public function isActive(): bool

@@ -132,7 +132,10 @@ class StoreWizardForm
                         return self::$personaTemplates[$personality] ?? '';
                     })
                     ->reactive(),
-                // === Status, COntact, Template ===
+
+                // =====================================================
+                // Estado del Store y Notificación al Restaurante
+                // =====================================================
                 \Filament\Forms\Components\Select::make('status')
                     ->label('Estado del Store')
                     ->options([
@@ -144,25 +147,60 @@ class StoreWizardForm
                     ->required()
                     ->helperText('Demo: simulación completa sin persistir pedidos en BD')
                     ->columnSpanFull(),
- 
+
                 TextInput::make('store_whatsapp')
                     ->label('WhatsApp del Restaurante')
                     ->placeholder('573001234567')
                     ->helperText('Número con código de país, sin espacios ni símbolos. Ej: 573001234567')
                     ->columnSpanFull(),
- 
+
                 TextInput::make('store_order_template')
                     ->label('Plantilla Meta para Pedidos')
                     ->placeholder('nuevo_pedido')
                     ->helperText('Nombre exacto de la plantilla aprobada en Meta Business Manager')
                     ->columnSpanFull(),
- 
+
                 TextInput::make('store_order_template_lang')
                     ->label('Idioma de la Plantilla')
                     ->placeholder('es_CO')
                     ->default('es_CO')
                     ->helperText('Código de idioma BCP-47. Ej: es_CO, en_US, es_MX')
                     ->columnSpanFull(),
+
+                // =====================================================
+                // ZONA DE COBERTURA — Bounding Box
+                // Los 4 puntos definen el rectángulo de entrega.
+                // Obtener coordenadas desde Google Maps:
+                // Clic derecho en el punto → "¿Qué hay aquí?"
+                // =====================================================
+                \Filament\Forms\Components\Placeholder::make('coverage_help')
+                    ->label('📍 Zona de Cobertura (Bounding Box)')
+                    ->content('Define el rectángulo de entrega con 4 coordenadas obtenidas desde Google Maps. Si no se configura, no se validará cobertura.')
+                    ->columnSpanFull(),
+
+                TextInput::make('store_bound_north')
+                    ->label('Norte (Latitud máxima)')
+                    ->placeholder('3.4800')
+                    ->helperText('Punto más al norte de la zona de cobertura')
+                    ->numeric(),
+
+                TextInput::make('store_bound_south')
+                    ->label('Sur (Latitud mínima)')
+                    ->placeholder('3.4600')
+                    ->helperText('Punto más al sur de la zona de cobertura')
+                    ->numeric(),
+
+                TextInput::make('store_bound_east')
+                    ->label('Este (Longitud máxima)')
+                    ->placeholder('-76.510')
+                    ->helperText('Punto más al este de la zona de cobertura')
+                    ->numeric(),
+
+                TextInput::make('store_bound_west')
+                    ->label('Oeste (Longitud mínima)')
+                    ->placeholder('-76.540')
+                    ->helperText('Punto más al oeste de la zona de cobertura')
+                    ->numeric(),
             ]);
     }
 }
