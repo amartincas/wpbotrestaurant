@@ -100,6 +100,33 @@ class StoreForm
                     ->placeholder('es_CO')
                     ->default('es_CO')
                     ->helperText('Código de idioma BCP-47. Ej: es_CO, en_US, es_MX'),
+
+                // =====================================================
+                // ZONA DE COBERTURA — Bounding Box
+                // =====================================================
+                TextInput::make('store_bound_north')
+                    ->label('Norte (Latitud máxima)')
+                    ->placeholder('3.4800')
+                    ->helperText('Punto más al norte de la zona de cobertura')
+                    ->numeric(),
+
+                TextInput::make('store_bound_south')
+                    ->label('Sur (Latitud mínima)')
+                    ->placeholder('3.4600')
+                    ->helperText('Punto más al sur de la zona de cobertura')
+                    ->numeric(),
+
+                TextInput::make('store_bound_east')
+                    ->label('Este (Longitud máxima)')
+                    ->placeholder('-76.510')
+                    ->helperText('Punto más al este de la zona de cobertura')
+                    ->numeric(),
+
+                TextInput::make('store_bound_west')
+                    ->label('Oeste (Longitud mínima)')
+                    ->placeholder('-76.540')
+                    ->helperText('Punto más al oeste de la zona de cobertura')
+                    ->numeric(),
             ]);
     }
 }
