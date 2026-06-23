@@ -128,8 +128,22 @@
                     {{-- Messages --}}
                     <div id="chat-container" wire:poll.3s style="flex: 1; overflow-y: auto; padding: 1.5rem; display: flex; flex-direction: column; gap: 1rem;">
                         @foreach ($messages as $message)
-                            <div style="display: flex; width: 100%; justify-content: {{ $message->role === 'user' ? 'flex-start' : 'flex-end' }};">
-                                <div style="max-width: 75%; padding: 0.6rem 1rem; border-radius: 12px; background: {{ $message->role === 'user' ? 'white' : '#dcf8c6' }}; box-shadow: 0 1px 1px rgba(0,0,0,0.1);">
+                            @php
+                                // Estilos por rol
+                                $roleConfig = match($message->role) {
+                                    'user'       => ['justify' => 'flex-start', 'bg' => '#ffffff', 'label' => '👤 Cliente',     'labelColor' => '#6b7280'],
+                                    'assistant'  => ['justify' => 'flex-end',   'bg' => '#dcf8c6', 'label' => '🤖 Bot',          'labelColor' => '#059669'],
+                                    'restaurant' => ['justify' => 'flex-start', 'bg' => '#fef3c7', 'label' => '🏪 Restaurante',  'labelColor' => '#d97706'],
+                                    'system'     => ['justify' => 'flex-end',   'bg' => '#ede9fe', 'label' => '🔔 Sistema',      'labelColor' => '#7c3aed'],
+                                    default      => ['justify' => 'flex-end',   'bg' => '#f3f4f6', 'label' => $message->role,    'labelColor' => '#6b7280'],
+                                };
+                            @endphp
+                            <div style="display: flex; width: 100%; justify-content: {{ $roleConfig['justify'] }};">
+                                <div style="max-width: 75%; padding: 0.6rem 1rem; border-radius: 12px; background: {{ $roleConfig['bg'] }}; box-shadow: 0 1px 1px rgba(0,0,0,0.1);">
+                                    {{-- Label del rol --}}
+                                    <div style="font-size: 10px; font-weight: 600; color: {{ $roleConfig['labelColor'] }}; margin-bottom: 3px;">
+                                        {{ $roleConfig['label'] }}
+                                    </div>
                                     <p style="font-size: 14px; margin: 0; word-wrap: break-word; white-space: pre-wrap; color: #111827;">{{ $message->content }}</p>
                                     <div style="font-size: 10px; color: #6b7280; text-align: right; margin-top: 4px;">{{ $message->created_at->format('H:i') }}</div>
                                 </div>

@@ -578,6 +578,12 @@ private function handleRestaurantTextCommand(
             'customer_phone' => $lead->customer_phone,
             'status'         => $newStatus,
         ]);
+
+        // Guardar en chat unificado
+        $this->saveMessage($store, $lead->customer_phone, 'restaurant', "🏪 " . $text);
+        if ($clientMessage) {
+            $this->saveMessage($store, $lead->customer_phone, 'system', $clientMessage);
+        }
     }
 
     // 7. Si el pedido cambió a LISTO y el cliente no compartió ubicación,
@@ -593,6 +599,15 @@ private function handleRestaurantTextCommand(
             'lead_id'        => $lead->id,
             'customer_phone' => $lead->customer_phone,
         ]);
+
+        // Guardar solicitud de ubicación en chat unificado
+        $this->saveMessage($store, $lead->customer_phone, 'system',
+            "📍 Para que el domiciliario llegue más rápido a tu puerta, ¿puedes compartir tu ubicación por WhatsApp?
+
+Solo toca el clip 📎 → Ubicación → *Compartir ubicación actual*
+
+Si prefieres no hacerlo, no hay problema — el domiciliario llegará con la dirección registrada. 🏠"
+        );
     }
 }
 
@@ -712,6 +727,12 @@ private function handleRestaurantButtonResponse(
             'status'         => $newStatus,
             'sent'           => $sent,
         ]);
+
+        // Guardar en chat unificado
+        $this->saveMessage($store, $lead->customer_phone, 'restaurant', "🏪 [Botón] " . $buttonText);
+        if ($clientMessage) {
+            $this->saveMessage($store, $lead->customer_phone, 'system', $clientMessage);
+        }
     }
 }
 // -------------------------------------------------------------------------
@@ -925,6 +946,32 @@ private function handleRestaurantButtonResponse(
      *   STORE 2 DEMO | STORE 2 ACTIVE | STORE 2 INACTIVE
      *   STORE 2 WHATSAPP 573001234567 NOMBRE Restaurante X
      */
+    /**
+     * Guarda un mensaje en whatsapp_messages para el chat unificado.
+     * Roles: user, assistant, restaurant, system
+     */
+    private function saveMessage(
+        \App\Models\Store $store,
+        string $customerPhone,
+        string $role,
+        string $content
+    ): void {
+        try {
+            \App\Models\WhatsAppMessage::create([
+                'store_id'       => $store->id,
+                'customer_phone' => $customerPhone,
+                'role'           => $role,
+                'content'        => $content,
+            ]);
+        } catch (\Exception $e) {
+            Log::error('CHAT: Error guardando mensaje en historial', [
+                'store_id' => $store->id,
+                'role'     => $role,
+                'error'    => $e->getMessage(),
+            ]);
+        }
+    }
+
     private function parseStoreCommand(string $text): ?array
     {
         if (!preg_match('/^STORE\s+(\d+)\s+(.+)$/i', trim($text), $matches)) {
