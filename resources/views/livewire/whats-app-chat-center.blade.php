@@ -147,15 +147,13 @@
                                     <p style="font-size: 14px; margin: 0; word-wrap: break-word; white-space: pre-wrap; color: #111827;">{{ $message->content }}</p>
                                     <div style="display: flex; justify-content: flex-end; gap: 0.5rem; align-items: center; margin-top: 4px;">
                                         <span style="font-size: 10px; color: #6b7280;">{{ $message->created_at->format('H:i') }}</span>
-                                        @if($message->role === 'assistant')
-                                            @php
-                                                $status = $this->messageStatus($message);
-                                            @endphp
-                                            @if($status)
-                                                <span style="font-size: 10px; color: {{ $status['color'] }};">
-                                                    {{ $status['icon'] }}
-                                                </span>
-                                            @endif
+                                        @php
+                                            $status = $this->messageStatus($message);
+                                        @endphp
+                                        @if($status)
+                                            <span style="font-size: 10px; color: {{ $status['color'] }};">
+                                                {{ $status['icon'] }}
+                                            </span>
                                         @endif
                                     </div>
                                 </div>
