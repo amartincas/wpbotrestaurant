@@ -162,6 +162,7 @@ class WhatsAppChatCenter extends Component
     {
         $this->selectedPhone = (string) $phone;
         $this->loadConversations(); // Force message load
+        $this->getMessageStatuses();
 
         $isSuperAdmin = Auth::user()?->is_super_admin ?? false;
         
@@ -289,6 +290,7 @@ class WhatsAppChatCenter extends Component
             // 3. Clear input and refresh
             $this->newMessage = '';
             $this->loadConversations();
+            $this->getMessageStatuses();
             
             // 4. Scroll down
             $this->dispatch('scroll-down');
@@ -543,6 +545,7 @@ class WhatsAppChatCenter extends Component
             }
 
             $this->selectConversation($targetPhone);
+            $this->getMessageStatuses();
         } else {
             Notification::make()
                 ->title('Error al enviar')
