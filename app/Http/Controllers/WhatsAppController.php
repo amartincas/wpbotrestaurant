@@ -583,10 +583,18 @@ private function handleRestaurantTextCommand(
     $clientMessage = \App\Models\Lead::statusMessage($newStatus);
 
     if ($clientMessage) {
+        $systemMessage = \App\Models\WhatsAppMessage::create([
+            'store_id'       => $store->id,
+            'customer_phone' => $lead->customer_phone,
+            'role'           => 'system',
+            'content'        => $clientMessage,
+        ]);
+
         \App\Services\WhatsAppService::sendMessage(
             to:      $lead->customer_phone,
             message: $clientMessage,
             store:   $store,
+            messageId: $systemMessage->id,
         );
 
         Log::info('RESTAURANT_TEXT: Cliente notificado', [
@@ -597,33 +605,31 @@ private function handleRestaurantTextCommand(
 
         // Guardar en chat unificado
         $this->saveMessage($store, $lead->customer_phone, 'restaurant', "🏪 " . $text);
-        if ($clientMessage) {
-            $this->saveMessage($store, $lead->customer_phone, 'system', $clientMessage);
-        }
     }
 
     // 7. Si el pedido cambió a LISTO y el cliente no compartió ubicación,
     //    pedirle que la comparta para agilizar la entrega del domiciliario.
     if ($newStatus === \App\Models\Lead::STATUS_LISTO && empty($lead->location)) {
+        $locationRequest = "📍 Para que el domiciliario llegue más rápido a tu puerta, ¿puedes compartir tu ubicación por WhatsApp?\n\nSolo toca el clip 📎 → Ubicación → *Compartir ubicación actual*\n\nSi prefieres no hacerlo, no hay problema — el domiciliario llegará con la dirección registrada. 🏠";
+
+        $systemMessage = \App\Models\WhatsAppMessage::create([
+            'store_id'       => $store->id,
+            'customer_phone' => $lead->customer_phone,
+            'role'           => 'system',
+            'content'        => $locationRequest,
+        ]);
+
         \App\Services\WhatsAppService::sendMessage(
             to:      $lead->customer_phone,
-            message: "📍 Para que el domiciliario llegue más rápido a tu puerta, ¿puedes compartir tu ubicación por WhatsApp?\n\nSolo toca el clip 📎 → Ubicación → *Compartir ubicación actual*\n\nSi prefieres no hacerlo, no hay problema — el domiciliario llegará con la dirección registrada. 🏠",
+            message: $locationRequest,
             store:   $store,
+            messageId: $systemMessage->id,
         );
 
         Log::info('LOCATION_REQUEST: Solicitada ubicación al cliente — pedido LISTO sin GPS', [
             'lead_id'        => $lead->id,
             'customer_phone' => $lead->customer_phone,
         ]);
-
-        // Guardar solicitud de ubicación en chat unificado
-        $this->saveMessage($store, $lead->customer_phone, 'system',
-            "📍 Para que el domiciliario llegue más rápido a tu puerta, ¿puedes compartir tu ubicación por WhatsApp?
-
-Solo toca el clip 📎 → Ubicación → *Compartir ubicación actual*
-
-Si prefieres no hacerlo, no hay problema — el domiciliario llegará con la dirección registrada. 🏠"
-        );
     }
 }
 
@@ -731,10 +737,18 @@ private function handleRestaurantButtonResponse(
     $clientMessage = \App\Models\Lead::statusMessage($newStatus);
 
     if ($clientMessage) {
+        $systemMessage = \App\Models\WhatsAppMessage::create([
+            'store_id'       => $store->id,
+            'customer_phone' => $lead->customer_phone,
+            'role'           => 'system',
+            'content'        => $clientMessage,
+        ]);
+
         $sent = \App\Services\WhatsAppService::sendMessage(
             to:      $lead->customer_phone,
             message: $clientMessage,
             store:   $store,
+            messageId: $systemMessage->id,
         );
 
         Log::info('BUTTON_RESPONSE: Cliente notificado del cambio de estado', [
@@ -746,9 +760,6 @@ private function handleRestaurantButtonResponse(
 
         // Guardar en chat unificado
         $this->saveMessage($store, $lead->customer_phone, 'restaurant', "🏪 [Botón] " . $buttonText);
-        if ($clientMessage) {
-            $this->saveMessage($store, $lead->customer_phone, 'system', $clientMessage);
-        }
     }
 }
 // -------------------------------------------------------------------------
