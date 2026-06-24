@@ -28,6 +28,7 @@ class WhatsAppChatCenter extends Component
     public $stores = []; // Available stores for superuser filter
     public ?int $selectedLeadId = null; // For JS modal
     public $whatsappTemplates = [];    // List templates
+    public array $messageStatuses = []; // Cached status lookup for rendered messages
 
     public function mount()
     {
@@ -136,6 +137,20 @@ class WhatsAppChatCenter extends Component
                 'trace' => $e->getTraceAsString(),
             ]);
         }
+    }
+
+    public function getMessageStatuses(): void
+    {
+        $statuses = [];
+
+        foreach ($this->messages as $message) {
+            $status = WhatsAppStatusTracker::getStatusForMessage($message->id);
+            if ($status) {
+                $statuses[$message->id] = $status;
+            }
+        }
+
+        $this->messageStatuses = $statuses;
     }
 
     /**
@@ -288,7 +303,7 @@ class WhatsAppChatCenter extends Component
 
     public function messageStatus(WhatsAppMessage $message): ?array
     {
-        $status = WhatsAppStatusTracker::getStatusForMessage($message->id);
+        $status = $this->messageStatuses[$message->id] ?? null;
 
         return match ($status) {
             'pending'   => ['icon' => '⏱️', 'color' => '#6b7280'],

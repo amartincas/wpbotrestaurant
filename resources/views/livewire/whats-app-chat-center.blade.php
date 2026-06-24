@@ -126,7 +126,7 @@
                     </div>
 
                     {{-- Messages --}}
-                    <div id="chat-container" wire:poll.3s style="flex: 1; overflow-y: auto; padding: 1.5rem; display: flex; flex-direction: column; gap: 1rem;">
+                    <div id="chat-container" wire:poll.3s="getMessageStatuses" style="flex: 1; overflow-y: auto; padding: 1.5rem; display: flex; flex-direction: column; gap: 1rem;">
                         @foreach ($messages as $message)
                             @php
                                 // Estilos por rol
