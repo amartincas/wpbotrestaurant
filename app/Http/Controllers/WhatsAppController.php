@@ -6,6 +6,7 @@ use App\Models\Store;
 use App\Models\Conversation;
 use App\Jobs\ProcessWhatsAppMessage;
 use App\Services\WhatsAppService;
+use App\Services\WhatsAppStatusTracker;
 use App\Models\Lead;
 use App\Models\WhatsAppTemplate;
 use Illuminate\Http\Request;
@@ -71,9 +72,24 @@ class WhatsAppController extends Controller
 {
     $payload = $request->json()->all();
 
-    // 1. FILTRAR EVENTOS DE ESTADO (Sent, Delivered, Read)
+    // 1. PROCESS META MESSAGE STATUS EVENTS
     if (isset($payload['entry'][0]['changes'][0]['value']['statuses'])) {
-        return response('OK', 200);
+        $statuses = $payload['entry'][0]['changes'][0]['value']['statuses'];
+
+        foreach ($statuses as $statusEvent) {
+            $wamid = $statusEvent['id'] ?? null;
+            $status = $statusEvent['status'] ?? null;
+
+            if ($wamid && $status) {
+                WhatsAppStatusTracker::setStatusForWamid($wamid, $status);
+                Log::info('WhatsApp status event processed', [
+                    'wamid' => $wamid,
+                    'status' => $status,
+                ]);
+            }
+        }
+
+        return response('EVENT_RECEIVED', 200);
     }
 
     // Extract first message from the array
@@ -366,7 +382,7 @@ class WhatsAppController extends Controller
         $body = $message['text']['body'] ?? null;
     } elseif (in_array($type, ['audio', 'voice'], true)) {
         $mediaId = $message[$type]['id'] ?? null;
-        
+
         // Keep body empty so ProcessWhatsAppMessage can trigger transcription logic
         $body = null;
 

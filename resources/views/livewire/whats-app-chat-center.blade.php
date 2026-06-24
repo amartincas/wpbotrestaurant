@@ -145,7 +145,19 @@
                                         {{ $roleConfig['label'] }}
                                     </div>
                                     <p style="font-size: 14px; margin: 0; word-wrap: break-word; white-space: pre-wrap; color: #111827;">{{ $message->content }}</p>
-                                    <div style="font-size: 10px; color: #6b7280; text-align: right; margin-top: 4px;">{{ $message->created_at->format('H:i') }}</div>
+                                    <div style="display: flex; justify-content: flex-end; gap: 0.5rem; align-items: center; margin-top: 4px;">
+                                        <span style="font-size: 10px; color: #6b7280;">{{ $message->created_at->format('H:i') }}</span>
+                                        @if($message->role === 'assistant')
+                                            @php
+                                                $statusIcon = $this->messageStatus($message);
+                                            @endphp
+                                            @if($statusIcon)
+                                                <span style="font-size: 10px; color: {{ $statusIcon === '✓✓' && WhatsAppStatusTracker::getStatusForMessage($message->id) === 'read' ? '#2563eb' : '#6b7280' }};">
+                                                    {{ $statusIcon }}
+                                                </span>
+                                            @endif
+                                        @endif
+                                    </div>
                                 </div>
                             </div>
                         @endforeach

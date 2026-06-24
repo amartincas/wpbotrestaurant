@@ -7,6 +7,7 @@ use App\Models\Conversation;
 use App\Models\Store;
 use App\Models\WhatsAppMessage;
 use App\Services\WhatsAppService;
+use App\Services\WhatsAppStatusTracker;
 use Livewire\Attributes\On;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -248,7 +249,7 @@ class WhatsAppChatCenter extends Component
         try {
             // 1. Save message to database (sent by operator)
             // CRITICAL: role='assistant' ensures bot maintains context when re-enabled
-            WhatsAppMessage::create([
+            $chatMessage = WhatsAppMessage::create([
                 'store_id' => $storeId,
                 'customer_phone' => $this->selectedPhone,
                 'content' => $this->newMessage,
@@ -258,7 +259,7 @@ class WhatsAppChatCenter extends Component
             // 2. Send via WhatsApp API
             $store = Store::find($storeId);
             if ($store) {
-                WhatsAppService::sendMessage($this->selectedPhone, $this->newMessage, $store);
+                WhatsAppService::sendMessage($this->selectedPhone, $this->newMessage, $store, $chatMessage->id);
                 
                 Log::info('Manual message sent via WhatsApp', [
                     'store_id' => $storeId,
@@ -283,6 +284,20 @@ class WhatsAppChatCenter extends Component
                 'error' => $e->getMessage(),
             ]);
         }
+    }
+
+    public function messageStatus(WhatsAppMessage $message): ?string
+    {
+        $status = WhatsAppStatusTracker::getStatusForMessage($message->id);
+
+        return match ($status) {
+            'pending' => '⏱️',
+            'sent' => '✓',
+            'delivered' => '✓✓',
+            'read' => '✓✓',
+            'failed' => '✗',
+            default => null,
+        };
     }
 
     /**
@@ -474,12 +489,27 @@ class WhatsAppChatCenter extends Component
         $this->selectedConversationId = $conversation->id;
         $this->selectedPhone = $targetPhone;
 
+        $chatMessage = WhatsAppMessage::create([
+            'store_id'       => $storeId,
+            'customer_phone' => $targetPhone,
+            'content'        => $renderedBody = $template->body_preview,
+            'role'           => 'assistant',
+        ]);
+
+        foreach (array_values($resolvedValues) as $index => $value) {
+            $placeholder = '{{'. ($index + 1). '}}';
+            $renderedBody = str_replace($placeholder, $value, $renderedBody);
+        }
+
+        $chatMessage->update(['content' => $renderedBody]);
+
         $sent = WhatsAppService::sendTemplateMessage(
             to:           $targetPhone,
             templateName: $template->name,
             languageCode: $template->language,
             variables:    array_values($resolvedValues),
             store:        $store,
+            messageId:    $chatMessage->id,
         );
 
         if ($sent && $template->is_reengagement && $lead) {
@@ -487,19 +517,6 @@ class WhatsAppChatCenter extends Component
         }
 
         if ($sent) {
-            $renderedBody = $template->body_preview;
-            foreach (array_values($resolvedValues) as $index => $value) {
-                $placeholder = '{{'. ($index + 1). '}}';
-                $renderedBody = str_replace($placeholder, $value, $renderedBody);
-            }
-
-            WhatsAppMessage::create([
-                'store_id'       => $storeId,
-                'customer_phone' => $targetPhone,
-                'content'        => $renderedBody,
-                'role'           => 'assistant',
-            ]);
-
             Notification::make()
                 ->title('Plantilla enviada')
                 ->body('El mensaje fue enviado correctamente al cliente.')

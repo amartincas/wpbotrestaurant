@@ -6,6 +6,7 @@ use App\Models\Store;
 use App\Models\ProductImage;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use App\Services\WhatsAppStatusTracker;
 
 class WhatsAppService
 {
@@ -15,12 +16,17 @@ class WhatsAppService
      * @param string $to Phone number in format: countrycode[phonenumber]
      * @param string $message Message text to send
      * @param Store $store Store with WhatsApp credentials
+     * @param int|null $messageId Local DB message ID to map status events to cache
      * @return bool True if message was sent successfully
      */
-    public static function sendMessage(string $to, string $message, Store $store): bool
+    public static function sendMessage(string $to, string $message, Store $store, ?int $messageId = null): bool
     {
         try {
             $url = "https://graph.facebook.com/v20.0/{$store->wa_phone_number_id}/messages";
+
+            if ($messageId !== null) {
+                WhatsAppStatusTracker::markPending($messageId);
+            }
 
             $response = Http::withToken($store->wa_access_token)
                 ->post($url, [
@@ -30,14 +36,19 @@ class WhatsAppService
                     'type' => 'text',
                     'text' => ['body' => $message],
                 ]);
-            
+
             if ($response->failed()) {
                 Log::error("Error de Meta API", [
                     'store_id' => $store->id,
                     'status' => $response->status(),
                     'body' => $response->json()
                 ]);
-            }    
+            }
+
+            $wamid = data_get($response->json(), 'messages.0.id');
+            if ($response->successful() && $messageId !== null && $wamid) {
+                WhatsAppStatusTracker::trackWamid($messageId, $wamid);
+            }
 
             Log::debug('WhatsApp message sent', [
                 'store_id' => $store->id,
@@ -47,6 +58,10 @@ class WhatsAppService
             ]);
 
             if (!$response->successful()) {
+                if ($messageId !== null) {
+                    WhatsAppStatusTracker::setStatusForMessage($messageId, 'failed');
+                }
+
                 Log::warning('WhatsApp message send failed', [
                     'store_id' => $store->id,
                     'to' => $to,
@@ -106,7 +121,8 @@ class WhatsAppService
         string $templateName,
         string $languageCode,
         array  $variables,
-        Store  $store
+        Store  $store,
+        ?int   $messageId = null
     ): bool {
         try {
             $url = "https://graph.facebook.com/v20.0/{$store->wa_phone_number_id}/messages";
@@ -155,9 +171,18 @@ class WhatsAppService
                 'payload' => $payload
             ]);
 
+            if ($messageId !== null) {
+                WhatsAppStatusTracker::markPending($messageId);
+            }
+
             $response = Http::withToken($store->wa_access_token)
                 ->timeout(15)
                 ->post($url, $payload);
+
+            $wamid = data_get($response->json(), 'messages.0.id');
+            if ($response->successful() && $messageId !== null && $wamid) {
+                WhatsAppStatusTracker::trackWamid($messageId, $wamid);
+            }
 
             // Log detailed Meta error before the generic failure check,
             // mirroring the pattern used in sendMessage().
@@ -172,6 +197,10 @@ class WhatsAppService
             }
 
             if (!$response->successful()) {
+                if ($messageId !== null) {
+                    WhatsAppStatusTracker::setStatusForMessage($messageId, 'failed');
+                }
+
                 Log::warning('WhatsApp template message send failed', [
                     'store_id'      => $store->id,
                     'to'            => $to,
