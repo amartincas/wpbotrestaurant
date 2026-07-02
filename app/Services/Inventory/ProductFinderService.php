@@ -3,6 +3,7 @@
 namespace App\Services\Inventory;
 
 use App\Models\Product;
+use App\Models\Store;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\Log;
@@ -128,12 +129,67 @@ class ProductFinderService
     }
 
     /**
+     * Resolve which store a customer message belongs to by matching product
+     * names contained within the message text, across ALL stores.
+     *
+     * Used when the WhatsApp number is shared across every restaurant, so the
+     * store can no longer be identified from Meta's phone_number_id.
+     *
+     * Direction matters: this checks whether a product's (short) name is
+     * CONTAINED WITHIN the (longer) customer message — the inverse of
+     * findProductsWithTypes()'s LIKE direction, which rarely matches full
+     * customer sentences.
+     *
+     * @param string $message
+     * @return array{store: ?Store, ambiguousStores: ?Collection, matchedProducts: Collection}
+     */
+    public function resolveStoreByMention(string $message): array
+    {
+        $text = trim($message);
+
+        if ($text === '' || mb_strlen($text) < 3 || $this->isGenericQuery(strtolower($text))) {
+            return ['store' => null, 'ambiguousStores' => null, 'matchedProducts' => collect()];
+        }
+
+        $matched = Product::query()
+            ->select(['id', 'store_id', 'name'])
+            ->get()
+            ->filter(fn (Product $product) => filled($product->name) && mb_stripos($text, $product->name) !== false);
+
+        $storeIds = $matched->pluck('store_id')->unique();
+
+        Log::info('PRODUCT_FINDER: Cross-store resolution by mention', [
+            'message' => $text,
+            'matched_product_count' => $matched->count(),
+            'matched_store_ids' => $storeIds->values()->all(),
+        ]);
+
+        if ($storeIds->count() === 1) {
+            return [
+                'store' => Store::find($storeIds->first()),
+                'ambiguousStores' => null,
+                'matchedProducts' => $matched,
+            ];
+        }
+
+        if ($storeIds->count() > 1) {
+            return [
+                'store' => null,
+                'ambiguousStores' => Store::whereIn('id', $storeIds)->get(),
+                'matchedProducts' => $matched,
+            ];
+        }
+
+        return ['store' => null, 'ambiguousStores' => null, 'matchedProducts' => collect()];
+    }
+
+    /**
      * Check if the search query is generic/short and should return full catalog.
      *
      * @param string $query
      * @return bool
      */
-    private function isGenericQuery(string $query): bool
+    protected function isGenericQuery(string $query): bool
     {
         // If query is very short (1-2 chars), it's too generic
         if (strlen($query) <= 2) {

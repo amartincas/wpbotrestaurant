@@ -4,9 +4,11 @@ namespace App\Http\Controllers;
 
 use App\Models\Store;
 use App\Models\Conversation;
+use App\Models\WhatsAppPlatformSetting;
 use App\Jobs\ProcessWhatsAppMessage;
 use App\Services\WhatsAppService;
 use App\Services\WhatsAppStatusTracker;
+use App\Services\Inventory\ProductFinderService;
 use App\Models\Lead;
 use App\Models\WhatsAppTemplate;
 use Illuminate\Http\Request;
@@ -20,7 +22,7 @@ class WhatsAppController extends Controller
 {
     /**
      * Handle Meta WhatsApp webhook verification challenge.
-     * GET /api/whatsapp/webhook/{store_token}
+     * GET /api/whatsapp/webhook
      *
      * Meta sends a GET request with query parameters:
      * - hub.mode=subscribe
@@ -28,47 +30,34 @@ class WhatsAppController extends Controller
      * - hub.verify_token=<verify_token>
      *
      * @param Request $request
-     * @param string $store_token
      * @return Response
      */
-    public function verify(Request $request, string $store_token)
+    public function verify(Request $request)
     {
-        // Find store by decrypted wa_verify_token
-        // Since wa_verify_token is encrypted in DB, we load all stores and compare
-        // (Store table is small, so this is efficient)
-        $store = Store::all()->firstWhere('wa_verify_token', $store_token);
+        $settings = WhatsAppPlatformSetting::current();
 
-        if (!$store) {
-            Log::warning('WhatsApp webhook verification failed: store not found', [
-                'token_length' => strlen($store_token),
-            ]);
-            return response('Store Not Found', 404);
-        }
-
-        // Capturamos los datos que envía Meta
         $mode = $request->input('hub_mode');
         $challenge = $request->input('hub_challenge');
         $verifyToken = $request->input('hub_verify_token');
 
-        // Validamos contra el token de la base de datos
-        if ($mode === 'subscribe' && $verifyToken === $store->wa_verify_token) {
+        if ($mode === 'subscribe' && $settings->wa_verify_token && $verifyToken === $settings->wa_verify_token) {
             // IMPORTANTE: Retornar solo el challenge como texto plano
             return response($challenge, 200)
                     ->header('Content-Type', 'text/plain');
         }
 
+        Log::warning('WhatsApp webhook verification failed', ['mode' => $mode]);
         return response('Forbidden', 403);
     }
 
     /**
      * Handle incoming WhatsApp messages from Meta webhook.
-     * POST /api/whatsapp/webhook/{store_token}
+     * POST /api/whatsapp/webhook
      *
      * @param Request $request
-     * @param string $store_token
      * @return Response
      */
-    public function handle(Request $request, string $store_token): Response
+    public function handle(Request $request): Response
 {
     $payload = $request->json()->all();
 
@@ -118,32 +107,57 @@ class WhatsAppController extends Controller
     // Si pasa los filtros, guardamos el log real del mensaje entrante
     Log::info('Raw WhatsApp Webhook Payload', ['payload' => $payload]);
 
-    $store = $this->resolveStoreFromPayload($payload);
+    $type      = $message['type'] ?? null;
+    $fromPhone = $message['from'] ?? null;
+
+    // =========================================================
+    // IDENTIFICACIÓN DEL REMITENTE
+    // El número de WhatsApp es compartido por todos los restaurantes,
+    // así que ya no se puede resolver el store por wa_phone_number_id.
+    // Primero se determina QUIÉN escribe (personal del restaurante vía
+    // store_whatsapp, superadmin vía User.whatsapp, o cliente) y solo
+    // para clientes se aplica la nueva cadena de resolución por mensaje.
+    // =========================================================
+    $isRestaurant = $fromPhone ? Store::where('store_whatsapp', $fromPhone)->exists() : false;
+    $isSuperAdmin = $fromPhone ? \App\Models\User::where('whatsapp', $fromPhone)->where('is_super_admin', true)->exists() : false;
+
+    if ($isRestaurant) {
+        $store = Store::where('store_whatsapp', $fromPhone)->first();
+    } elseif ($isSuperAdmin) {
+        $superAdminUser = \App\Models\User::where('whatsapp', $fromPhone)->where('is_super_admin', true)->first();
+        $store = $superAdminUser?->store ?? Store::query()->first();
+    } else {
+        $resolution = $this->resolveStoreForCustomer($fromPhone, $type, $message);
+
+        if ($resolution['ambiguousStores']) {
+            $this->replyAskWhichStore($fromPhone, $resolution['ambiguousStores']);
+            return response('EVENT_RECEIVED', 200);
+        }
+
+        if (!$resolution['store']) {
+            $this->replyCannotResolveStore($fromPhone);
+            return response('EVENT_RECEIVED', 200);
+        }
+
+        $store = $resolution['store'];
+    }
+
     if (!$store) {
-        Log::warning('WhatsApp message handling failed: unable to resolve store from webhook metadata', [
-            'store_token' => $store_token,
-            'payload_metadata' => data_get($payload, 'entry.0.changes.0.value.metadata'),
+        Log::warning('WhatsApp message handling failed: unable to resolve a store for this sender', [
+            'from' => $fromPhone,
+            'is_restaurant' => $isRestaurant,
+            'is_super_admin' => $isSuperAdmin,
         ]);
         return response('Not Found', 404);
     }
-
-    $type      = $message['type'] ?? null;
-    $fromPhone = $message['from'] ?? null;
 
     // =========================================================
     // CRM: Captura automática del lead en cada mensaje entrante
     // Crea o actualiza el CustomerLead para este contacto.
     // Solo para mensajes de clientes (no del restaurante ni superadmin).
     // =========================================================
-    if ($fromPhone && $type !== 'button') {
-        $isRestaurant = \App\Models\Store::where('store_whatsapp', $fromPhone)->exists();
-        $isSuperAdmin = \App\Models\User::where('whatsapp', $fromPhone)
-            ->where('is_super_admin', true)
-            ->exists();
-
-        if (!$isRestaurant && !$isSuperAdmin) {
-            \App\Services\CustomerLeadService::findOrCreateLead($store, $fromPhone);
-        }
+    if ($fromPhone && $type !== 'button' && !$isRestaurant && !$isSuperAdmin) {
+        \App\Services\CustomerLeadService::findOrCreateLead($store, $fromPhone);
     }
 
     $body    = null;
@@ -953,16 +967,94 @@ private function handleRestaurantButtonResponse(
         ]);
     }
 
-    private function resolveStoreFromPayload(array $payload): ?Store
+    /**
+     * Resuelve a qué restaurante pertenece un mensaje de un CLIENTE, ahora que
+     * el número de WhatsApp es compartido y ya no identifica al store.
+     *
+     * Cadena de resolución:
+     *  1. Nombre del plato mencionado en el texto -> ProductFinderService (cruza todos los stores).
+     *  2. Conversación reciente (últimas 24h) de este teléfono -> continúa el pedido en curso.
+     *  3. Sin match -> ['store' => null, 'ambiguousStores' => null] (el caller responde el fallback).
+     *
+     * Nota: para audio/voice no hay texto disponible aún (la transcripción ocurre
+     * dentro de ProcessWhatsAppMessage), así que el paso 1 se omite y solo aplica
+     * el paso 2 — un cliente nuevo cuyo primer mensaje sea una nota de voz caerá
+     * al fallback del paso 3.
+     *
+     * @return array{store: ?Store, ambiguousStores: ?\Illuminate\Database\Eloquent\Collection}
+     */
+    private function resolveStoreForCustomer(?string $fromPhone, ?string $type, array $message): array
     {
-        $metadata = data_get($payload, 'entry.0.changes.0.value.metadata', []);
-        $phoneNumberId = $metadata['phone_number_id'] ?? $metadata['phoneNumberId'] ?? null;
+        if ($type === 'text') {
+            $textBody = $message['text']['body'] ?? null;
 
-        if (empty($phoneNumberId)) {
-            return null;
+            if ($textBody) {
+                $resolution = (new ProductFinderService())->resolveStoreByMention($textBody);
+
+                if ($resolution['store'] || $resolution['ambiguousStores']) {
+                    return ['store' => $resolution['store'], 'ambiguousStores' => $resolution['ambiguousStores']];
+                }
+            }
         }
 
-        return Store::where('wa_phone_number_id', (string) $phoneNumberId)->first();
+        if ($fromPhone) {
+            $conversation = Conversation::where('customer_phone', $fromPhone)
+                ->where('last_session_at', '>=', now()->subDay())
+                ->orderByDesc('last_session_at')
+                ->first();
+
+            if ($conversation) {
+                return ['store' => $conversation->store, 'ambiguousStores' => null];
+            }
+        }
+
+        return ['store' => null, 'ambiguousStores' => null];
+    }
+
+    /**
+     * Responde cuando el nombre del plato coincide con productos de más de un restaurante.
+     */
+    private function replyAskWhichStore(string $fromPhone, \Illuminate\Database\Eloquent\Collection $ambiguousStores): void
+    {
+        $names = $ambiguousStores->pluck('name')->filter()->implode(', ');
+
+        $anyStore = Store::query()->first();
+        if (!$anyStore) {
+            return;
+        }
+
+        \App\Services\WhatsAppService::sendMessage(
+            to:      $fromPhone,
+            message: "¡Hola! 👋 Encontramos ese plato en más de un restaurante ({$names}). ¿Podrías confirmarnos a cuál te refieres?",
+            store:   $anyStore,
+        );
+
+        Log::info('CUSTOMER_ROUTING: Mensaje ambiguo entre varios restaurantes', [
+            'from' => $fromPhone,
+            'candidate_stores' => $ambiguousStores->pluck('id')->all(),
+        ]);
+    }
+
+    /**
+     * Responde cuando no fue posible identificar el restaurante (sin match de
+     * producto ni conversación reciente) — no se despacha el Job de IA.
+     */
+    private function replyCannotResolveStore(string $fromPhone): void
+    {
+        $anyStore = Store::query()->first();
+        if (!$anyStore) {
+            return;
+        }
+
+        \App\Services\WhatsAppService::sendMessage(
+            to:      $fromPhone,
+            message: "¡Hola! 👋 Para ayudarte, cuéntanos el nombre del plato o del restaurante que buscas 🍽️",
+            store:   $anyStore,
+        );
+
+        Log::warning('CUSTOMER_ROUTING: No se pudo resolver el restaurante para este mensaje', [
+            'from' => $fromPhone,
+        ]);
     }
 
     /**

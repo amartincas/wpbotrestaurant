@@ -16,10 +16,6 @@ class StoreInfolist
                     ->badge(),
                 TextEntry::make('system_prompt')
                     ->columnSpanFull(),
-                TextEntry::make('ai_provider')
-                    ->badge(),
-                TextEntry::make('ai_model'),
-                TextEntry::make('wa_phone_number_id'),
                 TextEntry::make('created_at')
                     ->dateTime()
                     ->placeholder('-'),

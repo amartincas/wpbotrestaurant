@@ -7,7 +7,6 @@ use App\Models\User;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Str;
 use Livewire\Component;
 
 class RegisterUser extends Component
@@ -32,17 +31,12 @@ class RegisterUser extends Component
         try {
             DB::transaction(function () {
                 // 1. Create the Store with defaults
+                // WhatsApp/AI credentials are no longer per-store — the platform
+                // uses a single shared configuration (see WhatsAppPlatformSetting).
                 $store = Store::create([
                     'name' => $this->store_name,
                     'personality_type' => 'asesor',
                     'system_prompt' => 'You are a helpful assistant.',
-                    'ai_provider' => 'openai',
-                    'ai_model' => 'gpt-4o',
-                    'wa_access_token' => null,
-                    'wa_phone_number_id' => null,
-                    'wa_business_account_id' => null,
-                    'ai_api_key' => null,
-                    'wa_verify_token' => Str::random(32),
                 ]);
 
                 // 2. Create the User and assign to the store

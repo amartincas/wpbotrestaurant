@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Attributes\Fillable;
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -11,13 +12,6 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
     'name',
     'personality_type',
     'system_prompt',
-    'ai_provider',
-    'ai_model',
-    'ai_api_key',
-    'wa_access_token',
-    'wa_phone_number_id',
-    'wa_business_account_id',
-    'wa_verify_token',
     'status',
     'store_bound_north',
     'store_bound_south',
@@ -35,11 +29,49 @@ class Store extends Model
     {
         return [
             'personality_type' => 'string',
-            'ai_provider' => 'string',
-            'ai_api_key' => 'encrypted',
-            'wa_access_token' => 'encrypted',
-            'wa_verify_token' => 'encrypted',
         ];
+    }
+
+    /**
+     * The 7 WhatsApp/AI credential fields below no longer live on `stores` —
+     * they moved to the single platform-wide WhatsAppPlatformSetting row.
+     * These read-only accessors keep every existing `$store->wa_access_token`
+     * style call site working unchanged. Deliberately not added to $appends
+     * so secrets never leak into toArray()/JSON serialization of a Store.
+     */
+    protected function aiProvider(): Attribute
+    {
+        return Attribute::make(get: fn () => WhatsAppPlatformSetting::current()->ai_provider);
+    }
+
+    protected function aiModel(): Attribute
+    {
+        return Attribute::make(get: fn () => WhatsAppPlatformSetting::current()->ai_model);
+    }
+
+    protected function aiApiKey(): Attribute
+    {
+        return Attribute::make(get: fn () => WhatsAppPlatformSetting::current()->ai_api_key);
+    }
+
+    protected function waAccessToken(): Attribute
+    {
+        return Attribute::make(get: fn () => WhatsAppPlatformSetting::current()->wa_access_token);
+    }
+
+    protected function waPhoneNumberId(): Attribute
+    {
+        return Attribute::make(get: fn () => WhatsAppPlatformSetting::current()->wa_phone_number_id);
+    }
+
+    protected function waBusinessAccountId(): Attribute
+    {
+        return Attribute::make(get: fn () => WhatsAppPlatformSetting::current()->wa_business_account_id);
+    }
+
+    protected function waVerifyToken(): Attribute
+    {
+        return Attribute::make(get: fn () => WhatsAppPlatformSetting::current()->wa_verify_token);
     }
 
     public function products(): HasMany

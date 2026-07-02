@@ -19,18 +19,6 @@ class StoresTable
                     ->searchable(),
                 TextColumn::make('personality_type')
                     ->badge(),
-                TextColumn::make('ai_provider')
-                    ->badge(),
-                TextColumn::make('ai_model')
-                    ->searchable(),
-                TextColumn::make('ai_api_key')
-                    ->label('AI API Key')
-                    ->toggleable(isToggledHiddenByDefault: true),
-                TextColumn::make('wa_phone_number_id')
-                    ->searchable(),
-                TextColumn::make('wa_business_account_id')
-                    ->label('WABA ID')
-                    ->searchable(),
                 TextColumn::make('created_at')
                     ->dateTime()
                     ->sortable()
