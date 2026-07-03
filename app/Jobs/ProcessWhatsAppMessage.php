@@ -16,6 +16,7 @@ use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 
@@ -343,6 +344,13 @@ class ProcessWhatsAppMessage implements ShouldQueue
                 // Resolver snapshot de precios desde la BD
                 $snapshot = $this->resolveOrderSnapshot($leadData);
 
+                // Si el cliente ya compartió su ubicación antes de que existiera
+                // este pedido (ej. verificación de cobertura al inicio), la
+                // recogemos aquí para que la notificación al restaurante ya
+                // incluya el mapa desde el primer mensaje.
+                $pendingLocationKey = "pending_customer_location:{$this->store->id}:{$this->from}";
+                $pendingLocation = Cache::pull($pendingLocationKey);
+
                 $lead = Lead::create([
                     'store_id'                     => $this->store->id,
                     'customer_phone'               => $this->from,
@@ -359,7 +367,15 @@ class ProcessWhatsAppMessage implements ShouldQueue
                     'total_amount'                 => $leadData['total_amount'] ?? null,
                     'summary'                      => $messageToSend,
                     'is_processed'                 => false,
+                    'location'                     => $pendingLocation,
                 ]);
+
+                if ($pendingLocation) {
+                    Log::info('LOCATION_ATTACHED: Ubicación pendiente adjuntada al nuevo Lead', [
+                        'lead_id' => $lead->id,
+                        'location' => $pendingLocation,
+                    ]);
+                }
 
                 Log::info('Lead created from WhatsApp conversation', [
                     'store_id' => $this->store->id,

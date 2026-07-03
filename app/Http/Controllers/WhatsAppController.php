@@ -376,6 +376,22 @@ class WhatsAppController extends Controller
                         'maps_link'  => $mapsLink,
                     ]);
                 }
+            } else {
+                // Cliente compartió ubicación ANTES de que exista un pedido
+                // (ej. verificación de cobertura al inicio de la conversación).
+                // Se guarda temporalmente para adjuntarla al Lead en cuanto
+                // se cree — ver Lead::create() en ProcessWhatsAppMessage.
+                \Illuminate\Support\Facades\Cache::put(
+                    "pending_customer_location:{$store->id}:{$fromPhone}",
+                    "{$lat},{$lng}",
+                    now()->addHours(2)
+                );
+
+                Log::info('LOCATION_PENDING: Ubicación guardada temporalmente (sin pedido activo aún)', [
+                    'store_id' => $store->id,
+                    'from'     => $fromPhone,
+                    'location' => "{$lat},{$lng}",
+                ]);
             }
 
             // Si el pedido está en estado activo de entrega, no pasar al Job de IA
