@@ -359,7 +359,7 @@ class WhatsAppController extends Controller
 
                 \App\Services\WhatsAppService::sendMessage(
                     to:      $fromPhone,
-                    message: "Lo sentimos 😔 Tu ubicación está fuera de nuestra zona de cobertura actual. Por favor contáctanos para verificar si podemos llegar a tu dirección.",
+                    message: "Lo sentimos 😔 Por ahora no tenemos cobertura en tu zona. Esperamos llegar pronto a tu ubicación.",
                     store:   $store,
                 );
 
