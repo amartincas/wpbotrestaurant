@@ -174,6 +174,42 @@ class WhatsAppController extends Controller
     }
 
     // =========================================================
+    // GATE DE COBERTURA (solo clientes, solo si el store tiene zona de
+    // cobertura configurada): ningún mensaje pasa a la IA hasta que el
+    // cliente comparta su ubicación GPS y esté confirmado dentro de la
+    // zona de entrega. Es un bloqueo duro en código — no depende de que
+    // la IA decida seguir la instrucción del prompt. Se cachea 48h para
+    // no volver a pedirla en cada mensaje.
+    // =========================================================
+    if ($fromPhone && !$isRestaurant && !$isSuperAdmin && $type !== 'location' && $store->hasCoverage()) {
+        $coverageConfirmed = Cache::has("coverage_confirmed:{$store->id}:{$fromPhone}");
+
+        if (!$coverageConfirmed) {
+            // Recordar a qué store pertenece este cliente aunque el mensaje
+            // se bloquee — si no, el siguiente mensaje (la ubicación, sin
+            // texto que matchear) no tendría cómo resolver el restaurante.
+            Conversation::firstOrCreate(
+                ['store_id' => $store->id, 'customer_phone' => $fromPhone],
+                ['last_session_at' => now()]
+            )->update(['last_session_at' => now()]);
+
+            \App\Services\WhatsAppService::sendMessage(
+                to:      $fromPhone,
+                message: "¡Hola! 👋 Antes de continuar, ¿podrías compartir tu ubicación de WhatsApp (📎 → Ubicación → Compartir ubicación actual)? Así confirmamos que llegamos a tu zona.",
+                store:   $store,
+            );
+
+            Log::info('COVERAGE_GATE: Mensaje bloqueado — esperando confirmación de cobertura', [
+                'store_id' => $store->id,
+                'from'     => $fromPhone,
+                'type'     => $type,
+            ]);
+
+            return response('EVENT_RECEIVED', 200);
+        }
+    }
+
+    // =========================================================
     // CRM: Captura automática del lead en cada mensaje entrante
     // Crea o actualiza el CustomerLead para este contacto.
     // Solo para mensajes de clientes (no del restaurante ni superadmin).
@@ -329,6 +365,10 @@ class WhatsAppController extends Controller
 
                 return response('EVENT_RECEIVED', 200);
             }
+
+            // Cobertura confirmada (dentro de zona, o store sin cobertura
+            // configurada) — libera el gate para los próximos mensajes.
+            Cache::put("coverage_confirmed:{$store->id}:{$fromPhone}", true, now()->addDays(2));
 
             // Guardar coordenadas en el lead más reciente del cliente
             $lead = \App\Models\Lead::where('store_id', $store->id)
