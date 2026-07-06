@@ -451,6 +451,15 @@ class WhatsAppController extends Controller
                     'store_id' => $store->id,
                     'lead_id'  => $activeLead->id ?? null,
                 ]);
+
+                // El cliente sigue esperando alguna confirmación aunque no pase
+                // por la IA — sin esto, el chat queda en silencio total.
+                \App\Services\WhatsAppService::sendMessage(
+                    to:      $fromPhone,
+                    message: "📍 ¡Recibimos tu ubicación! Ya la registramos en tu pedido #{$activeLead->id}.",
+                    store:   $store,
+                );
+
                 return response('EVENT_RECEIVED', 200);
             }
 
