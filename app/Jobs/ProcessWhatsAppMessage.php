@@ -326,6 +326,13 @@ class ProcessWhatsAppMessage implements ShouldQueue
 
             // Extract lead data from the conversation for both explicit and fallback detection
             $leadData = $this->extractLeadDataWithAI($history, $aiResponse);
+
+            // Acumular en caché lo extraído en este turno — igual que la ubicación
+            // pendiente, así el pedido no depende de que la ventana de extracción
+            // (limitada a los últimos mensajes) siga viendo el producto/extras
+            // varios turnos después de que el cliente los mencionó.
+            $leadData = $this->mergeAndCacheOrderDraft($leadData);
+
             $shouldCreateLead = $this->shouldCreateLeadFromResponse($aiResponse, $leadData, $hasLeadToken);
 
             if ($shouldCreateLead) {
@@ -376,6 +383,10 @@ class ProcessWhatsAppMessage implements ShouldQueue
                         'location' => $pendingLocation,
                     ]);
                 }
+
+                // Pedido finalizado — limpiar el acumulado para que el próximo
+                // pedido de este cliente empiece desde cero.
+                Cache::forget("order_draft:{$this->store->id}:{$this->from}");
 
                 Log::info('Lead created from WhatsApp conversation', [
                     'store_id' => $this->store->id,
@@ -1209,6 +1220,27 @@ PROMPT;
         }
 
         return substr($value, 0, $maxLength);
+    }
+
+    /**
+     * Combina lo extraído en el turno actual con lo acumulado en caché de
+     * turnos anteriores de este mismo pedido — un campo nuevo no vacío
+     * sobreescribe el valor previo (ej: el cliente cambió de producto); un
+     * campo vacío en este turno conserva lo ya confirmado antes.
+     */
+    private function mergeAndCacheOrderDraft(array $freshData): array
+    {
+        $draftKey = "order_draft:{$this->store->id}:{$this->from}";
+        $cached = Cache::get($draftKey, []);
+
+        $merged = [];
+        foreach (['customer_name', 'delivery_address_or_location', 'product_service_name', 'total_amount', 'order_extras', 'comments'] as $field) {
+            $merged[$field] = !empty($freshData[$field]) ? $freshData[$field] : ($cached[$field] ?? null);
+        }
+
+        Cache::put($draftKey, $merged, now()->addHours(4));
+
+        return $merged;
     }
 
     /**
