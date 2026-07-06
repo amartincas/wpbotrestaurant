@@ -1085,8 +1085,14 @@ PROMPT;
                 // Validate product/service name against recent messages
                 if (!empty($extracted['product_service_name'])) {
                     $productName = $extracted['product_service_name'];
-                    $recentText = $this->messageBody . ' ' . $lastAiResponse;
-                    
+
+                    // Usa la misma ventana de 6 mensajes que se le dio al extractor,
+                    // no solo el turno actual — si no, un "sí, confirmo" final (que no
+                    // repite el nombre del producto) invalida un producto ya confirmado
+                    // pocos turnos atrás y el pedido llega al restaurante como N/A.
+                    $recentText = implode(' ', array_column($contextMessages, 'content'))
+                        . ' ' . $this->messageBody . ' ' . $lastAiResponse;
+
                     // Check if product appears in recent context (case-insensitive)
                     if (stripos($recentText, $productName) === false) {
                         Log::warning('Extracted product not in recent context', [

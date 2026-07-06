@@ -368,7 +368,19 @@ class WhatsAppController extends Controller
 
             // Cobertura confirmada (dentro de zona, o store sin cobertura
             // configurada) — libera el gate para los próximos mensajes.
-            Cache::put("coverage_confirmed:{$store->id}:{$fromPhone}", true, now()->addDays(2));
+            $coverageKey = "coverage_confirmed:{$store->id}:{$fromPhone}";
+            $wasAlreadyConfirmed = Cache::has($coverageKey);
+            Cache::put($coverageKey, true, now()->addDays(2));
+
+            // Primera vez que se confirma cobertura para este cliente —
+            // avisarle explícitamente antes de que la IA retome la conversación.
+            if ($coverageResult === true && !$wasAlreadyConfirmed) {
+                \App\Services\WhatsAppService::sendMessage(
+                    to:      $fromPhone,
+                    message: "✅ ¡Sí tenemos cobertura en tu zona! Continuemos con tu pedido.",
+                    store:   $store,
+                );
+            }
 
             // Guardar coordenadas en el lead más reciente del cliente
             $lead = \App\Models\Lead::where('store_id', $store->id)
