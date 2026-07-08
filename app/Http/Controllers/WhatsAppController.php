@@ -193,6 +193,8 @@ class WhatsAppController extends Controller
     // la IA decida seguir la instrucción del prompt. Se cachea 48h para
     // no volver a pedirla en cada mensaje.
     // =========================================================
+    $coveragePending = false;
+
     if ($fromPhone && !$isRestaurant && !$isSuperAdmin && $type !== 'location' && $store->hasCoverage()) {
         $coverageConfirmed = Cache::has("coverage_confirmed:{$store->id}:{$fromPhone}");
 
@@ -205,32 +207,54 @@ class WhatsAppController extends Controller
                 ['last_session_at' => now()]
             )->update(['last_session_at' => now()]);
 
-            // Guardar lo que escribió el cliente aunque el mensaje se bloquee
-            // — si no, cualquier cosa que escriba mientras espera compartir
-            // ubicación (ej. "Buenos", "Cali") queda invisible en el chat.
-            $blockedContent = match ($type) {
-                'text'  => $message['text']['body'] ?? '(mensaje de texto)',
-                default => "(mensaje tipo: {$type})",
-            };
-            $this->saveMessage($store, $fromPhone, 'user', $blockedContent);
+            $promptedKey = "coverage_prompted:{$store->id}:{$fromPhone}";
 
-            $coverageGateMessage = "¡Hola! 👋 Antes de continuar, ¿podrías compartir tu ubicación de WhatsApp (📎 → Ubicación → Compartir ubicación actual)? Así confirmamos que llegamos a tu zona.";
+            if (!Cache::has($promptedKey)) {
+                // Primera vez: pedir la ubicación con el mensaje fijo, sin
+                // pasar por la IA todavía.
+                Cache::put($promptedKey, true, now()->addHours(2));
 
-            \App\Services\WhatsAppService::sendMessage(
-                to:      $fromPhone,
-                message: $coverageGateMessage,
-                store:   $store,
-            );
+                // Guardar lo que escribió el cliente aunque el mensaje se
+                // bloquee — si no, cualquier cosa que escriba mientras espera
+                // compartir ubicación (ej. "Buenos", "Cali") queda invisible
+                // en el chat.
+                $blockedContent = match ($type) {
+                    'text'  => $message['text']['body'] ?? '(mensaje de texto)',
+                    default => "(mensaje tipo: {$type})",
+                };
+                $this->saveMessage($store, $fromPhone, 'user', $blockedContent);
 
-            $this->saveMessage($store, $fromPhone, 'assistant', $coverageGateMessage);
+                $coverageGateMessage = "¡Hola! 👋 Antes de continuar, ¿podrías compartir tu ubicación de WhatsApp (📎 → Ubicación → Compartir ubicación actual)? Así confirmamos que llegamos a tu zona.";
 
-            Log::info('COVERAGE_GATE: Mensaje bloqueado — esperando confirmación de cobertura', [
+                \App\Services\WhatsAppService::sendMessage(
+                    to:      $fromPhone,
+                    message: $coverageGateMessage,
+                    store:   $store,
+                );
+
+                $this->saveMessage($store, $fromPhone, 'assistant', $coverageGateMessage);
+
+                Log::info('COVERAGE_GATE: Mensaje bloqueado — esperando confirmación de cobertura', [
+                    'store_id' => $store->id,
+                    'from'     => $fromPhone,
+                    'type'     => $type,
+                ]);
+
+                return response('EVENT_RECEIVED', 200);
+            }
+
+            // Ya se le pidió la ubicación antes y sigue sin compartirla —
+            // en vez de repetirle el mismo mensaje sin sentido, se deja
+            // pasar a la IA para que responda dudas (precio, cobertura,
+            // menú, etc.), marcando $coveragePending para que no cierre
+            // el pedido todavía sin ubicación confirmada.
+            $coveragePending = true;
+
+            Log::info('COVERAGE_GATE: Cliente sigue sin compartir ubicación — dejando pasar a la IA', [
                 'store_id' => $store->id,
                 'from'     => $fromPhone,
                 'type'     => $type,
             ]);
-
-            return response('EVENT_RECEIVED', 200);
         }
     }
 
@@ -573,7 +597,9 @@ class WhatsAppController extends Controller
         $body,
         $phoneId,
         $type,
-        $mediaId
+        $mediaId,
+        null,
+        $coveragePending
     );
 
     Log::info('WhatsApp message queued for processing', [

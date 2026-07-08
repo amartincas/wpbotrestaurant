@@ -40,6 +40,7 @@ class ProcessWhatsAppMessage implements ShouldQueue
         public ?string $messageType = null,
         public ?string $mediaId = null,
         public ?int $productContext = null,
+        public bool $coveragePending = false,
     ) {}
 
     /**
@@ -304,6 +305,26 @@ class ProcessWhatsAppMessage implements ShouldQueue
             $systemPrompt .= "Current Date/Time: " . now()->format('Y-m-d H:i:s') . "\n";
             $systemPrompt .= "Lead Completion Signal: [LEAD_COMPLETE]\n";
             $systemPrompt .= "ONLY append [LEAD_COMPLETE] when the customer has EXPLICITLY confirmed the order with a clear affirmative response (sí, confirmo, correcto, acepto, listo, dale, de acuerdo) AFTER you have shown the full order summary. Never emit this token before showing the summary. Never emit this token more than once per conversation unless the customer explicitly places a NEW and SEPARATE order after the previous one was already confirmed.\n";
+
+            // El cliente todavía no ha compartido su ubicación GPS (gate de
+            // cobertura pendiente) — puede seguir preguntando (precio, menú,
+            // si hay cobertura en su ciudad, etc.) y hay que responderle con
+            // normalidad, pero SIN tomar el pedido en firme todavía.
+            if ($this->coveragePending) {
+                $systemPrompt .= "\n### COBERTURA PENDIENTE DE CONFIRMAR:\n";
+                $systemPrompt .= "El cliente aún no ha compartido su ubicación GPS de WhatsApp, así que no hemos confirmado si llegamos a su zona. Responde con normalidad cualquier pregunta (precio, menú, ciudad, etc.), pero NO muestres el resumen final del pedido ni emitas [LEAD_COMPLETE] todavía.\n";
+
+                if ($this->store->hasCoverage()) {
+                    // Cobertura por zonas (bounding box), no toda la ciudad —
+                    // aclarar esto explícitamente para no prometer cobertura
+                    // total donde solo hay sectores cubiertos.
+                    $systemPrompt .= "Si pregunta si hacen domicilios en su ciudad, responde que SÍ tienen domicilios ahí, pero aclara que la cobertura es por sectores específicos de la ciudad, no en toda — por eso es necesario que comparta su ubicación exacta para confirmar si su dirección puntual queda dentro de la zona cubierta.\n";
+                } else {
+                    $systemPrompt .= "Este restaurante no tiene zonas de cobertura configuradas por sectores, así que puedes responder preguntas de ciudad/domicilio con la información disponible en el catálogo o reglas del negocio, sin necesidad de aclarar sectores.\n";
+                }
+
+                $systemPrompt .= "Después de responder su pregunta, recuérdale amablemente compartir su ubicación (📎 → Ubicación → Compartir ubicación actual) para poder confirmar cobertura y continuar con el pedido.\n";
+            }
 
             // Get the configured AI service for this store
             $aiEngine = AIServiceFactory::make($this->store);
