@@ -19,6 +19,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
     'ai_sales_strategy',
     'faq_context',
     'required_customer_info',
+    'meta_ad_ids',
 ])]
 class Product extends Model
 {
@@ -31,6 +32,7 @@ class Product extends Model
             'store_price' => 'decimal:2',
             'stock'       => 'integer',
             'type'        => 'string',
+            'meta_ad_ids' => 'array',
         ];
     }
 

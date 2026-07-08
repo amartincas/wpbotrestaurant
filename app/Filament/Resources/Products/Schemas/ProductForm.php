@@ -5,6 +5,7 @@ namespace App\Filament\Resources\Products\Schemas;
 use Filament\Forms\Components\FileUpload;
 use Filament\Forms\Components\Repeater;
 use Filament\Forms\Components\Select;
+use Filament\Forms\Components\TagsInput;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\Toggle;
@@ -97,6 +98,12 @@ class ProductForm
                 TextInput::make('required_customer_info')
                     ->label('Required Lead Data')
                     ->placeholder('E.g., Full name, phone, delivery address...')
+                    ->columnSpanFull(),
+
+                TagsInput::make('meta_ad_ids')
+                    ->label('IDs de anuncios de Meta (Click-to-WhatsApp)')
+                    ->placeholder('Pega el ID del anuncio y presiona Enter')
+                    ->helperText('Copia el ID del anuncio desde Meta Ads Manager (no el texto del mensaje). Así, cuando un cliente escriba desde ese anuncio, el sistema identifica el restaurante correcto aunque el mensaje prellenado no coincida exactamente con el nombre del producto.')
                     ->columnSpanFull(),
 
                 // =====================================================

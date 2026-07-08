@@ -132,6 +132,18 @@ class WhatsAppController extends Controller
     $type      = $message['type'] ?? null;
     $fromPhone = $message['from'] ?? null;
 
+    // El payload crudo llega enmascarado en el log de arriba ("Over 9 levels
+    // deep"), y "CONTENIDO REAL" solo se loguea si el store se resuelve —
+    // si la resolución falla, nunca vemos qué escribió el cliente. Este log
+    // corre siempre, antes de cualquier intento de resolución, para poder
+    // diagnosticar por qué un mensaje no logra resolver a ningún store.
+    Log::info('INCOMING_MESSAGE: Mensaje recibido antes de resolución', [
+        'from'     => $fromPhone,
+        'type'     => $type,
+        'text'     => $message['text']['body'] ?? null,
+        'referral' => $message['referral'] ?? null,
+    ]);
+
     // =========================================================
     // IDENTIFICACIÓN DEL REMITENTE
     // El número de WhatsApp es compartido por todos los restaurantes,
@@ -606,6 +618,36 @@ private function handleRestaurantTextCommand(
         return;
     }
 
+    // Comando especial: LLEGADA #lead_id — avisa al cliente que el
+    // domiciliario llegó. No cambia el estado del pedido.
+    if ($comando === 'llegada') {
+        if (!$leadId) {
+            \App\Services\WhatsAppService::sendMessage(
+                to:      $fromPhone,
+                message: "❓ Indica el número de pedido. Ejemplo: *LLEGADA 13*",
+                store:   $store,
+            );
+            return;
+        }
+        $this->handleArrivalNotice($store, $fromPhone, $leadId);
+        return;
+    }
+
+    // Comando especial: PEDIDO #lead_id — reenvía al restaurante el
+    // resumen completo del pedido. No cambia el estado.
+    if ($comando === 'pedido') {
+        if (!$leadId) {
+            \App\Services\WhatsAppService::sendMessage(
+                to:      $fromPhone,
+                message: "❓ Indica el número de pedido. Ejemplo: *PEDIDO 13*",
+                store:   $store,
+            );
+            return;
+        }
+        $this->handleResendOrderInfo($store, $fromPhone, $leadId);
+        return;
+    }
+
     // 1. Resolver estado
     $newStatus = \App\Models\Lead::resolveStatus($comando);
 
@@ -617,7 +659,7 @@ private function handleRestaurantTextCommand(
 
         \App\Services\WhatsAppService::sendMessage(
             to:      $fromPhone,
-            message: "❓ Comando no reconocido: \"{$text}\"\n\nComandos válidos:\n• ACEPTADO [#pedido]\n• LISTO [#pedido]\n• DESPACHADO [#pedido]\n• ENTREGADO [#pedido]\n• CANCELADO [#pedido]\n• TELEFONO [#pedido]",
+            message: "❓ Comando no reconocido: \"{$text}\"\n\nComandos válidos:\n• ACEPTADO [#pedido]\n• LISTO [#pedido]\n• DESPACHADO [#pedido]\n• ENTREGADO [#pedido]\n• CANCELADO [#pedido]\n• TELEFONO [#pedido]\n• LLEGADA [#pedido]\n• PEDIDO [#pedido]",
             store:   $store,
         );
         return;
@@ -797,6 +839,147 @@ private function handlePhoneRequest(
         'lead_id'        => $lead->id,
         'restaurant'     => $fromPhone,
         'customer_phone' => $lead->customer_phone,
+    ]);
+}
+
+/**
+ * Avisa al cliente que el domiciliario llegó a su dirección.
+ *
+ * Comando: LLEGADA #lead_id
+ * No cambia el estado del pedido — es solo un aviso puntual.
+ * Bloqueado si el pedido ya fue entregado o cancelado.
+ */
+private function handleArrivalNotice(
+    \App\Models\Store $store,
+    string $fromPhone,
+    int $leadId
+): void {
+    $lead = \App\Models\Lead::where('id', $leadId)
+        ->where('store_id', $store->id)
+        ->first();
+
+    if (!$lead) {
+        \App\Services\WhatsAppService::sendMessage(
+            to:      $fromPhone,
+            message: "❌ No se encontró el pedido #{$leadId} para este restaurante.",
+            store:   $store,
+        );
+        return;
+    }
+
+    if (in_array($lead->status, [
+        \App\Models\Lead::STATUS_ENTREGADO,
+        \App\Models\Lead::STATUS_CANCELADO,
+    ])) {
+        \App\Services\WhatsAppService::sendMessage(
+            to:      $fromPhone,
+            message: "⚠️ El pedido #{$leadId} ya está en estado *{$lead->status}* — no se puede avisar la llegada de un pedido entregado o cancelado.",
+            store:   $store,
+        );
+        return;
+    }
+
+    \App\Services\WhatsAppService::sendMessage(
+        to:      $lead->customer_phone,
+        message: "🚪 ¡Tu pedido llegó a tu puerta! Puedes recibirlo.",
+        store:   $store,
+    );
+
+    \App\Services\WhatsAppService::sendMessage(
+        to:      $fromPhone,
+        message: "✅ Aviso de llegada enviado al cliente del pedido #{$lead->id}.",
+        store:   $store,
+    );
+
+    Log::info('ARRIVAL_NOTICE: Aviso de llegada enviado al cliente', [
+        'store_id'       => $store->id,
+        'lead_id'        => $lead->id,
+        'restaurant'     => $fromPhone,
+        'customer_phone' => $lead->customer_phone,
+    ]);
+}
+
+/**
+ * Reenvía al restaurante el resumen completo de un pedido — útil cuando
+ * necesita verificarlo de nuevo (ej. domiciliario perdió el detalle).
+ *
+ * Comando: PEDIDO #lead_id
+ * No cambia el estado del pedido.
+ * Bloqueado si el pedido ya fue entregado o cancelado.
+ */
+private function handleResendOrderInfo(
+    \App\Models\Store $store,
+    string $fromPhone,
+    int $leadId
+): void {
+    $lead = \App\Models\Lead::where('id', $leadId)
+        ->where('store_id', $store->id)
+        ->first();
+
+    if (!$lead) {
+        \App\Services\WhatsAppService::sendMessage(
+            to:      $fromPhone,
+            message: "❌ No se encontró el pedido #{$leadId} para este restaurante.",
+            store:   $store,
+        );
+        return;
+    }
+
+    if (in_array($lead->status, [
+        \App\Models\Lead::STATUS_ENTREGADO,
+        \App\Models\Lead::STATUS_CANCELADO,
+    ])) {
+        \App\Services\WhatsAppService::sendMessage(
+            to:      $fromPhone,
+            message: "⚠️ El pedido #{$leadId} ya está en estado *{$lead->status}* — no se reenvía info de pedidos entregados o cancelados.",
+            store:   $store,
+        );
+        return;
+    }
+
+    $producto = $lead->product_name ?? $lead->product_service_name ?? 'N/A';
+
+    if (!empty($lead->extras_detail)) {
+        $extrasNames = collect($lead->extras_detail)->pluck('name')->filter()->implode(', ');
+        if ($extrasNames) {
+            $producto .= " + {$extrasNames}";
+        }
+    }
+
+    $valor = $lead->total_amount
+        ? '$' . number_format((float) preg_replace('/[^0-9.]/', '', $lead->total_amount), 0, ',', '.')
+        : 'Consultar';
+
+    if (!empty($lead->location)) {
+        [$lat, $lng] = explode(',', $lead->location);
+        $ubicacion = "https://maps.google.com/?q={$lat},{$lng}";
+    } else {
+        $ubicacion = 'No compartida';
+    }
+
+    $resumen = "📋 *Pedido #{$lead->id}*\n\n"
+        . "👤 Cliente: " . ($lead->customer_name ?? 'N/A') . "\n"
+        . "📞 Teléfono: {$lead->customer_phone}\n"
+        . "📍 Dirección: " . ($lead->delivery_address_or_location ?? 'N/A') . "\n"
+        . "🗺️ Ubicación: {$ubicacion}\n"
+        . "🍽️ Producto: {$producto}\n"
+        . "💰 Valor: {$valor}\n"
+        . "📌 Estado: *{$lead->status}*";
+
+    if (!empty($lead->comments)) {
+        $resumen .= "\n📝 Observaciones: {$lead->comments}";
+    }
+
+    \App\Services\WhatsAppService::sendMessage(
+        to:      $fromPhone,
+        message: $resumen,
+        store:   $store,
+    );
+
+    Log::info('ORDER_RESENT: Resumen de pedido reenviado al restaurante', [
+        'store_id'   => $store->id,
+        'lead_id'    => $lead->id,
+        'restaurant' => $fromPhone,
     ]);
 }
 
@@ -1071,19 +1254,33 @@ private function handleRestaurantButtonResponse(
      * el número de WhatsApp es compartido y ya no identifica al store.
      *
      * Cadena de resolución:
-     *  1. Nombre del plato mencionado en el texto -> ProductFinderService (cruza todos los stores).
-     *  2. Conversación reciente (últimas 24h) de este teléfono -> continúa el pedido en curso.
-     *  3. Sin match -> ['store' => null, 'ambiguousStores' => null] (el caller responde el fallback).
+     *  1. ID del anuncio de Meta (Click-to-WhatsApp) -> ProductFinderService,
+     *     por `referral.source_id`. Más confiable que el texto: el anunciante
+     *     lo configura una sola vez y no depende de que el mensaje prellenado
+     *     coincida exactamente con el nombre del producto.
+     *  2. Nombre del plato mencionado en el texto -> ProductFinderService (cruza todos los stores).
+     *  3. Conversación reciente (últimas 24h) de este teléfono -> continúa el pedido en curso.
+     *  4. Sin match -> ['store' => null, 'ambiguousStores' => null] (el caller responde el fallback).
      *
      * Nota: para audio/voice no hay texto disponible aún (la transcripción ocurre
-     * dentro de ProcessWhatsAppMessage), así que el paso 1 se omite y solo aplica
-     * el paso 2 — un cliente nuevo cuyo primer mensaje sea una nota de voz caerá
-     * al fallback del paso 3.
+     * dentro de ProcessWhatsAppMessage), así que el paso 2 se omite y solo aplica
+     * el paso 3 — un cliente nuevo cuyo primer mensaje sea una nota de voz caerá
+     * al fallback del paso 4.
      *
      * @return array{store: ?Store, ambiguousStores: ?\Illuminate\Database\Eloquent\Collection}
      */
     private function resolveStoreForCustomer(?string $fromPhone, ?string $type, array $message): array
     {
+        $adId = $message['referral']['source_id'] ?? null;
+
+        if ($adId) {
+            $resolution = (new ProductFinderService())->resolveStoreByAdId($adId);
+
+            if ($resolution['store'] || $resolution['ambiguousStores']) {
+                return ['store' => $resolution['store'], 'ambiguousStores' => $resolution['ambiguousStores']];
+            }
+        }
+
         if ($type === 'text') {
             $textBody = $message['text']['body'] ?? null;
 

@@ -184,6 +184,55 @@ class ProductFinderService
     }
 
     /**
+     * Resuelve a qué tienda pertenece un mensaje usando el ID del anuncio de
+     * Meta (Click-to-WhatsApp), tomado de `referral.source_id` en el webhook.
+     *
+     * Es más confiable que el matching por texto libre (resolveStoreByMention):
+     * el anunciante configura este ID una sola vez por campaña, así que no
+     * depende de que el mensaje prellenado del anuncio coincida exactamente
+     * con el nombre del producto en el catálogo.
+     *
+     * @param  string|null $adId
+     * @return array{store: ?Store, ambiguousStores: ?Collection, matchedProducts: Collection}
+     */
+    public function resolveStoreByAdId(?string $adId): array
+    {
+        if (!$adId) {
+            return ['store' => null, 'ambiguousStores' => null, 'matchedProducts' => collect()];
+        }
+
+        $matched = Product::query()
+            ->whereJsonContains('meta_ad_ids', $adId)
+            ->get(['id', 'store_id', 'name']);
+
+        $storeIds = $matched->pluck('store_id')->unique();
+
+        Log::info('PRODUCT_FINDER: Resolución por ad_id de Meta', [
+            'ad_id' => $adId,
+            'matched_product_count' => $matched->count(),
+            'matched_store_ids' => $storeIds->values()->all(),
+        ]);
+
+        if ($storeIds->count() === 1) {
+            return [
+                'store' => Store::find($storeIds->first()),
+                'ambiguousStores' => null,
+                'matchedProducts' => $matched,
+            ];
+        }
+
+        if ($storeIds->count() > 1) {
+            return [
+                'store' => null,
+                'ambiguousStores' => Store::whereIn('id', $storeIds)->get(),
+                'matchedProducts' => $matched,
+            ];
+        }
+
+        return ['store' => null, 'ambiguousStores' => null, 'matchedProducts' => collect()];
+    }
+
+    /**
      * Check if the search query is generic/short and should return full catalog.
      *
      * @param string $query
