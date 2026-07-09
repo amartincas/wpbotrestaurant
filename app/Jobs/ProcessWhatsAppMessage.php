@@ -324,6 +324,7 @@ class ProcessWhatsAppMessage implements ShouldQueue
                 }
 
                 $systemPrompt .= "Después de responder su pregunta, recuérdale amablemente compartir su ubicación (📎 → Ubicación → Compartir ubicación actual) para poder confirmar cobertura y continuar con el pedido.\n";
+                $systemPrompt .= "VERIFICACIÓN OBLIGATORIA ANTES DE CERRAR EL PEDIDO: antes de emitir [LEAD_COMPLETE] o decir cualquier frase que suene a confirmación (pedido confirmado, registrado, en preparación, en camino), pregúntate: ¿ya tengo la ubicación GPS de este cliente? Como este mensaje te dice que la respuesta es NO, no puedes emitir el token ni confirmar el pedido todavía — en su lugar, pídesela explícitamente indicando que la necesitas para validar que llegamos a su zona antes de continuar.\n";
             }
 
             // Get the configured AI service for this store
@@ -342,8 +343,28 @@ class ProcessWhatsAppMessage implements ShouldQueue
             // Get AI response with chat history
             $aiResponse = $aiEngine->getResponse($this->messageBody, $systemPrompt, $history);
 
-            $messageToSend = $aiResponse;
             $hasLeadToken = strpos($aiResponse, '[LEAD_COMPLETE]') !== false;
+
+            // Red de seguridad: sin importar lo que haga la IA, el pedido no
+            // se puede cerrar mientras la ubicación no esté confirmada — es
+            // un requisito duro para que el restaurante sepa que llega a la
+            // dirección del cliente. Esto cubre tanto el token explícito
+            // como una confirmación en texto natural (ej. "tu pedido está
+            // confirmado 🎉") sin el token — si dejáramos pasar ese texto
+            // tal cual, el cliente creería que su pedido va en camino
+            // cuando el restaurante nunca lo recibió.
+            if ($this->coveragePending && ($hasLeadToken || $this->isLeadCompletionResponse($aiResponse))) {
+                Log::warning('Confirmación de pedido bloqueada — ubicación aún no confirmada', [
+                    'store_id' => $this->store->id,
+                    'customer_phone' => $this->from,
+                    'had_token' => $hasLeadToken,
+                ]);
+
+                $aiResponse = "📍 Antes de confirmar tu pedido, necesito que compartas tu ubicación de WhatsApp (📎 → Ubicación → Compartir ubicación actual) para verificar que llegamos a tu zona.";
+                $hasLeadToken = false;
+            }
+
+            $messageToSend = $aiResponse;
 
             // Extract lead data from the conversation for both explicit and fallback detection
             $leadData = $this->extractLeadDataWithAI($history, $aiResponse);
@@ -354,7 +375,13 @@ class ProcessWhatsAppMessage implements ShouldQueue
             // varios turnos después de que el cliente los mencionó.
             $leadData = $this->mergeAndCacheOrderDraft($leadData);
 
-            $shouldCreateLead = $this->shouldCreateLeadFromResponse($aiResponse, $leadData, $hasLeadToken);
+            // Con la ubicación aún pendiente, nunca se crea el Lead — ni
+            // siquiera por la detección heurística de frases tipo "pedido
+            // confirmado" que la IA pudo haber escrito antes de que le
+            // quitáramos el token [LEAD_COMPLETE] arriba.
+            $shouldCreateLead = $this->coveragePending
+                ? false
+                : $this->shouldCreateLeadFromResponse($aiResponse, $leadData, $hasLeadToken);
 
             if ($shouldCreateLead) {
                 if ($hasLeadToken) {
